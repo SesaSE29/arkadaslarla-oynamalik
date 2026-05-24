@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arkadaşlarla Oynamalık 🎮</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Bungee&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+  <!-- Arkaplan dekorasyonu -->
+  <div class="bg-decoration">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+
+  <div id="app">
+
+    <!-- ========== EKRAN 1: GİRİŞ ========== -->
+    <section id="screen-home" class="screen active">
+      <div class="hero">
+        <h1 class="logo">
+          <span class="logo-line-1">Arkadaşlarla</span>
+          <span class="logo-line-2">Oynamalık</span>
+          <span class="logo-emoji">🎮</span>
+        </h1>
+        <p class="tagline">Arkadaşlarınla anında, ücretsiz, online!</p>
+      </div>
+
+      <div class="home-actions">
+        <div class="card-action">
+          <h2>✨ Yeni Oda Aç</h2>
+          <input type="text" id="create-name" placeholder="Adın..." maxlength="20" />
+          <button class="btn btn-primary" id="btn-create">Oda Oluştur</button>
+        </div>
+
+        <div class="card-action">
+          <h2>🚪 Odaya Katıl</h2>
+          <input type="text" id="join-name" placeholder="Adın..." maxlength="20" />
+          <input type="text" id="join-code" placeholder="ODA KODU" maxlength="4" />
+          <button class="btn btn-secondary" id="btn-join">Katıl</button>
+        </div>
+      </div>
+
+      <div class="games-preview">
+        <h3>Şu an oynanabilir oyunlar:</h3>
+        <div class="games-list">
+          <span class="game-chip">🔤 Kelime Zinciri</span>
+          <span class="game-chip">🧠 Hafıza Oyunu</span>
+          <span class="game-chip">🎨 Çizim-Tahmin</span>
+          <span class="game-chip">🎯 Trivia</span>
+          <span class="game-chip">🧛 Vampir Köylü</span>
+          <span class="game-chip">🐍 Yılan Savaşı</span>
+          <span class="game-chip">⚓ Amiral Battı</span>
+          <span class="game-chip">🃏 Uno Benzeri</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN 2: LOBİ ========== -->
+    <section id="screen-lobby" class="screen">
+      <div class="lobby-header">
+        <div class="room-code-display">
+          <span class="label">ODA KODU</span>
+          <span class="code" id="room-code">----</span>
+          <button class="btn-copy" id="btn-copy-code" title="Kopyala">📋</button>
+        </div>
+        <button class="btn btn-ghost" id="btn-leave">Ayrıl</button>
+      </div>
+
+      <div class="lobby-content">
+        <div class="players-panel">
+          <h2>Oyuncular <span class="badge" id="player-count">0</span></h2>
+          <ul class="players-list" id="players-list"></ul>
+          <p class="hint" id="lobby-hint">Arkadaşlarına oda kodunu paylaş!</p>
+        </div>
+
+        <div class="games-panel">
+          <h2>Bir Oyun Seç 🎲</h2>
+          <div class="games-grid">
+            <button class="game-card" data-game="kelime-zinciri">
+              <div class="game-icon">🔤</div>
+              <h3>Kelime Zinciri</h3>
+              <p>Son harften başla, sıra sende!</p>
+              <span class="game-meta">2-8 oyuncu · 5 dk</span>
+            </button>
+
+            <button class="game-card" data-game="hafiza">
+              <div class="game-icon">🧠</div>
+              <h3>Hafıza Oyunu</h3>
+              <p>Çiftleri bul, en çok bilen kazansın</p>
+              <span class="game-meta">2-8 oyuncu · 3 dk</span>
+            </button>
+
+            <button class="game-card" data-game="cizim">
+              <div class="game-icon">🎨</div>
+              <h3>Çizim-Tahmin</h3>
+              <p>Çiz ve tahmin et!</p>
+              <span class="game-meta">2-8 oyuncu · 10 dk</span>
+            </button>
+
+            <button class="game-card" data-game="trivia">
+              <div class="game-icon">🧠</div>
+              <h3>Trivia</h3>
+              <p>10 soru, hızlı cevapla!</p>
+              <span class="game-meta">2-8 oyuncu · 4 dk</span>
+            </button>
+
+            <button class="game-card" data-game="vampir">
+              <div class="game-icon">🧛</div>
+              <h3>Vampir Köylü</h3>
+              <p>Köylüleri vampirlerden kurtar!</p>
+              <span class="game-meta">4-8 oyuncu · 10 dk</span>
+            </button>
+
+            <button class="game-card" data-game="yilan">
+              <div class="game-icon">🐍</div>
+              <h3>Yılan Savaşı</h3>
+              <p>Büyü, hayatta kal!</p>
+              <span class="game-meta">2-8 oyuncu · 90 sn</span>
+            </button>
+
+            <button class="game-card" data-game="amiral">
+              <div class="game-icon">⚓</div>
+              <h3>Amiral Battı</h3>
+              <p>Gemileri bul, batır!</p>
+              <span class="game-meta">2 oyuncu · 5 dk</span>
+            </button>
+
+            <button class="game-card" data-game="uno">
+              <div class="game-icon">🃏</div>
+              <h3>Uno Benzeri</h3>
+              <p>Tüm kartlardan kurtul!</p>
+              <span class="game-meta">2-8 oyuncu · 5 dk</span>
+            </button>
+          </div>
+          <p class="hint" id="host-hint">Sadece oda kurucusu oyun başlatabilir.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN 3: KELİME ZİNCİRİ ========== -->
+    <section id="screen-kelime" class="screen">
+      <div class="game-header">
+        <h2>🔤 Kelime Zinciri</h2>
+        <button class="btn btn-ghost btn-sm" id="kelime-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="kelime-board">
+        <div class="kelime-status">
+          <div class="current-turn">
+            <span class="label">SIRA:</span>
+            <span class="player-name" id="kelime-current-player">-</span>
+          </div>
+          <div class="timer-circle">
+            <span id="kelime-timer">20</span>
+          </div>
+          <div class="next-letter">
+            <span class="label">HARF:</span>
+            <span class="letter" id="kelime-letter">-</span>
+          </div>
+        </div>
+
+        <div class="kelime-input-area" id="kelime-input-area">
+          <input type="text" id="kelime-input" placeholder="Kelimeyi yaz..." autocomplete="off" />
+          <button class="btn btn-primary" id="kelime-submit">Gönder</button>
+        </div>
+        <p class="kelime-error" id="kelime-error"></p>
+
+        <div class="kelime-history" id="kelime-history">
+          <p class="empty">Henüz kelime yok. İlk oyuncu başlasın!</p>
+        </div>
+      </div>
+
+      <div class="scoreboard" id="kelime-scoreboard"></div>
+
+      <div class="game-over" id="kelime-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="kelime-winner">-</strong></p>
+          <button class="btn btn-primary" id="kelime-back-lobby">Lobiye Dön</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN 4: HAFIZA OYUNU ========== -->
+    <section id="screen-hafiza" class="screen">
+      <div class="game-header">
+        <h2>🧠 Hafıza Oyunu</h2>
+        <button class="btn btn-ghost btn-sm" id="hafiza-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="hafiza-status">
+        <div class="current-turn">
+          <span class="label">SIRA:</span>
+          <span class="player-name" id="hafiza-current-player">-</span>
+        </div>
+      </div>
+
+      <div class="hafiza-board" id="hafiza-board"></div>
+
+      <div class="scoreboard" id="hafiza-scoreboard"></div>
+
+      <div class="game-over" id="hafiza-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="hafiza-winner">-</strong></p>
+          <button class="btn btn-primary" id="hafiza-back-lobby">Lobiye Dön</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN 5: ÇİZİM-TAHMİN ========== -->
+    <section id="screen-cizim" class="screen">
+      <div class="game-header">
+        <h2>🎨 Çizim-Tahmin</h2>
+        <button class="btn btn-ghost btn-sm" id="cizim-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="cizim-top">
+        <div class="cizim-info">
+          <div class="cizim-drawer">
+            <span class="label">ÇİZEN:</span>
+            <span class="player-name" id="cizim-drawer-name">-</span>
+          </div>
+          <div class="cizim-round">
+            <span class="label">TUR:</span>
+            <span id="cizim-round">1/3</span>
+          </div>
+        </div>
+        <div class="timer-circle small" id="cizim-timer-wrap">
+          <span id="cizim-timer">75</span>
+        </div>
+        <div class="cizim-word-display">
+          <span class="label">KELİME:</span>
+          <span class="word" id="cizim-word">_ _ _ _</span>
+        </div>
+      </div>
+
+      <div class="cizim-main">
+        <div class="cizim-canvas-wrap">
+          <canvas id="cizim-canvas" width="800" height="500"></canvas>
+          <div class="cizim-tools" id="cizim-tools" style="display:none">
+            <button class="tool-btn active" data-color="#1a0b2e" title="Siyah" style="background:#1a0b2e"></button>
+            <button class="tool-btn" data-color="#ff3e8a" title="Pembe" style="background:#ff3e8a"></button>
+            <button class="tool-btn" data-color="#00d4ff" title="Mavi" style="background:#00d4ff"></button>
+            <button class="tool-btn" data-color="#ffd93d" title="Sarı" style="background:#ffd93d"></button>
+            <button class="tool-btn" data-color="#6bcf7f" title="Yeşil" style="background:#6bcf7f"></button>
+            <button class="tool-btn" data-color="#ff5757" title="Kırmızı" style="background:#ff5757"></button>
+            <button class="tool-btn" data-color="#a86bff" title="Mor" style="background:#a86bff"></button>
+            <button class="tool-btn eraser" data-color="#ffffff" title="Silgi">🩹</button>
+            <button class="tool-btn clear-btn" id="cizim-clear" title="Tümünü Temizle">🗑️</button>
+          </div>
+        </div>
+
+        <div class="cizim-side">
+          <div class="cizim-chat" id="cizim-chat"></div>
+          <div class="cizim-guess-input" id="cizim-guess-wrap">
+            <input type="text" id="cizim-guess" placeholder="Tahminini yaz..." maxlength="30" autocomplete="off"/>
+            <button class="btn btn-primary" id="cizim-guess-btn">Gönder</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="scoreboard" id="cizim-scoreboard"></div>
+
+      <div class="cizim-reveal" id="cizim-reveal" style="display:none">
+        <div class="reveal-card">
+          <p class="reveal-label">Doğru cevap:</p>
+          <h3 id="cizim-reveal-word">-</h3>
+          <p class="reveal-hint">Yeni tur başlıyor...</p>
+        </div>
+      </div>
+
+      <div class="game-over" id="cizim-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="cizim-winner">-</strong></p>
+          <button class="btn btn-primary" id="cizim-back-lobby">Lobiye Dön</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN 6: TRIVIA ========== -->
+    <section id="screen-trivia" class="screen">
+      <div class="game-header">
+        <h2>🎯 Trivia</h2>
+        <button class="btn btn-ghost btn-sm" id="trivia-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="trivia-top">
+        <span class="trivia-number" id="trivia-number">Soru 1/10</span>
+        <span class="trivia-category" id="trivia-category">-</span>
+        <div class="timer-circle small">
+          <span id="trivia-timer">15</span>
+        </div>
+      </div>
+
+      <div class="trivia-question-card">
+        <h3 id="trivia-question">Soru yükleniyor...</h3>
+      </div>
+
+      <div class="trivia-options" id="trivia-options">
+        <!-- Şıklar JS ile doldurulacak -->
+      </div>
+
+      <div class="trivia-status" id="trivia-status"></div>
+
+      <div class="scoreboard" id="trivia-scoreboard"></div>
+
+      <div class="game-over" id="trivia-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="trivia-winner">-</strong></p>
+          <div id="trivia-final-scores"></div>
+          <button class="btn btn-primary" id="trivia-back-lobby">Lobiye Dön</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN 7: VAMPİR KÖYLÜ ========== -->
+    <section id="screen-vampir" class="screen">
+      <div class="game-header">
+        <h2>🧛 Vampir Köylü</h2>
+        <button class="btn btn-ghost btn-sm" id="vampir-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="vampir-top">
+        <div class="vampir-phase-info">
+          <span class="vampir-phase" id="vampir-phase">Gece</span>
+          <span class="vampir-day" id="vampir-day">Gün 1</span>
+        </div>
+        <div class="timer-circle small">
+          <span id="vampir-timer">25</span>
+        </div>
+        <div class="vampir-role-display">
+          <span class="label">ROLÜN:</span>
+          <span id="vampir-my-role">-</span>
+        </div>
+      </div>
+
+      <div class="vampir-main">
+        <div class="vampir-players-panel">
+          <h3>👥 Oyuncular</h3>
+          <div class="vampir-players" id="vampir-players"></div>
+        </div>
+
+        <div class="vampir-action-panel">
+          <div id="vampir-action-content">
+            <p class="vampir-instructions">Bekle...</p>
+          </div>
+        </div>
+
+        <div class="vampir-events-panel">
+          <h3>📜 Olaylar</h3>
+          <div class="vampir-events" id="vampir-events"></div>
+        </div>
+      </div>
+
+      <div class="game-over" id="vampir-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2 id="vampir-winner-title">🏆 Oyun Bitti!</h2>
+          <p id="vampir-winner-msg">-</p>
+          <div id="vampir-roles-reveal"></div>
+          <button class="btn btn-primary" id="vampir-back-lobby">Lobiye Dön</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN 8: YILAN SAVAŞI ========== -->
+    <section id="screen-yilan" class="screen">
+      <div class="game-header">
+        <h2>🐍 Yılan Savaşı</h2>
+        <button class="btn btn-ghost btn-sm" id="yilan-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="yilan-top">
+        <span class="yilan-status" id="yilan-status">Hareket etmek için ok tuşları veya WASD</span>
+        <div class="timer-circle small">
+          <span id="yilan-timer">90</span>
+        </div>
+      </div>
+
+      <div class="yilan-arena-wrap">
+        <canvas id="yilan-canvas" width="1000" height="700"></canvas>
+      </div>
+
+      <div class="yilan-mobile-controls" id="yilan-mobile-controls">
+        <div class="d-pad">
+          <button class="d-btn d-up" data-dir="up">↑</button>
+          <button class="d-btn d-left" data-dir="left">←</button>
+          <button class="d-btn d-down" data-dir="down">↓</button>
+          <button class="d-btn d-right" data-dir="right">→</button>
+        </div>
+      </div>
+
+      <div class="scoreboard" id="yilan-scoreboard"></div>
+
+      <div class="game-over" id="yilan-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="yilan-winner">-</strong></p>
+          <div id="yilan-final-scores"></div>
+          <button class="btn btn-primary" id="yilan-back-lobby">Lobiye Dön</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN 9: AMİRAL BATTI ========== -->
+    <section id="screen-amiral" class="screen">
+      <div class="game-header">
+        <h2>⚓ Amiral Battı</h2>
+        <button class="btn btn-ghost btn-sm" id="amiral-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="amiral-status" id="amiral-status">Gemilerini yerleştir!</div>
+
+      <!-- YERLEŞTİRME EKRANI -->
+      <div id="amiral-placement" class="amiral-section">
+        <p class="amiral-instructions">
+          Gemilerini sırayla yerleştir. Yön değiştirmek için <strong>R</strong> tuşuna bas (veya butona tıkla).
+        </p>
+        <div class="amiral-place-controls">
+          <div class="amiral-current-ship" id="amiral-current-ship">4'lü gemi (yatay)</div>
+          <button class="btn btn-secondary btn-sm" id="amiral-rotate">↻ Döndür</button>
+          <button class="btn btn-ghost btn-sm" id="amiral-restart">⟲ Baştan Başla</button>
+          <button class="btn btn-primary btn-sm" id="amiral-confirm" style="display:none">Hazırım!</button>
+        </div>
+        <div class="amiral-board placement" id="amiral-placement-board"></div>
+        <p class="amiral-waiting" id="amiral-waiting" style="display:none">⏳ Rakibin yerleştirmesi bekleniyor...</p>
+      </div>
+
+      <!-- SAVAŞ EKRANI -->
+      <div id="amiral-battle" class="amiral-section" style="display:none">
+        <div class="amiral-boards">
+          <div class="amiral-board-wrap">
+            <h3>🎯 Rakibin Tahtası</h3>
+            <p class="amiral-turn-info" id="amiral-opponent-turn">Sıra sende!</p>
+            <div class="amiral-board" id="amiral-opponent-board"></div>
+          </div>
+          <div class="amiral-board-wrap">
+            <h3>⛵ Senin Tahtan</h3>
+            <p class="amiral-ships-info" id="amiral-my-ships">5 gemi</p>
+            <div class="amiral-board" id="amiral-my-board"></div>
+          </div>
+        </div>
+        <div class="amiral-log" id="amiral-log"></div>
+      </div>
+
+      <div class="game-over" id="amiral-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="amiral-winner">-</strong></p>
+          <button class="btn btn-primary" id="amiral-back-lobby">Lobiye Dön</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN 10: UNO BENZERİ ========== -->
+    <section id="screen-uno" class="screen">
+      <div class="game-header">
+        <h2>🃏 Uno Benzeri</h2>
+        <button class="btn btn-ghost btn-sm" id="uno-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="uno-top">
+        <div class="uno-turn-info">
+          <span class="label">SIRA:</span>
+          <span id="uno-current-player">-</span>
+          <span class="uno-direction" id="uno-direction">→</span>
+        </div>
+        <div class="uno-color-indicator">
+          <span class="label">RENK:</span>
+          <span class="uno-color-dot" id="uno-color-dot"></span>
+        </div>
+      </div>
+
+      <div class="uno-main">
+        <div class="uno-players-bar" id="uno-players-bar"></div>
+        
+        <div class="uno-table">
+          <div class="uno-deck" id="uno-deck">
+            <div class="uno-card-back">🃏</div>
+            <span class="uno-deck-label">Çek</span>
+          </div>
+          <div class="uno-discard" id="uno-discard">
+            <!-- En üstteki kart -->
+          </div>
+        </div>
+
+        <div class="uno-log" id="uno-log"></div>
+
+        <div class="uno-hand-wrap">
+          <p class="uno-hand-label">Senin Elin:</p>
+          <div class="uno-hand" id="uno-hand"></div>
+        </div>
+      </div>
+
+      <!-- Renk seçme modalı (joker oynandığında) -->
+      <div class="uno-color-picker" id="uno-color-picker" style="display:none">
+        <div class="picker-card">
+          <h3>Renk Seç!</h3>
+          <div class="picker-colors">
+            <button class="picker-color" data-color="kirmizi" style="background:#ff5757"></button>
+            <button class="picker-color" data-color="sari" style="background:#ffd93d"></button>
+            <button class="picker-color" data-color="yesil" style="background:#6bcf7f"></button>
+            <button class="picker-color" data-color="mavi" style="background:#00d4ff"></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="game-over" id="uno-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="uno-winner">-</strong></p>
+          <button class="btn btn-primary" id="uno-back-lobby">Lobiye Dön</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Toast bildirimleri -->
+  <div id="toast" class="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
