@@ -1,18 +1,16 @@
 {
-  "name": "arkadaslarla-oynamalik",
-  "version": "1.0.0",
-  "description": "Arkadaşlarla oynanabilecek online oyunlar koleksiyonu",
-  "main": "server/index.js",
+  "name": "bir-kelime-bir-islem-v5.1",
+  "version": "5.1.0",
+  "description": "Bir Kelime Bir İşlem - v5.1",
+  "main": "server.js",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node server/index.js"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "socket.io": "^4.7.5",
-    "socket.io-client": "^4.8.3"
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

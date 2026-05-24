@@ -1,0 +1,22 @@
+{
+  "name": "Bir Kelime Bir İşlem",
+  "short_name": "Kelime İşlem",
+  "description": "Türkçe kelime ve işlem oyunu",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e1a",
+  "theme_color": "#f5c542",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%230a0e1a'/><text x='50%25' y='55%25' font-family='sans-serif' font-size='80' fill='%23f5c542' text-anchor='middle' dominant-baseline='middle' font-weight='bold'>BK</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%230a0e1a'/><text x='50%25' y='55%25' font-family='sans-serif' font-size='200' fill='%23f5c542' text-anchor='middle' dominant-baseline='middle' font-weight='bold'>BK</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
