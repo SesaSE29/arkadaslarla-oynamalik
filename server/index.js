@@ -88,7 +88,8 @@ function broadcastRoom(roomCode) {
           eliminated: op.eliminated
         })),
         game: room.game,
-        gameState: personalState
+        gameState: personalState,
+        settings: room.settings
       });
     });
     return;
@@ -123,7 +124,8 @@ function broadcastRoom(roomCode) {
         host: room.host,
         players: personalPlayers,
         game: room.game,
-        gameState: cleanState
+        gameState: cleanState,
+        settings: room.settings
       });
     });
   } else {
@@ -137,7 +139,8 @@ function broadcastRoom(roomCode) {
       host: room.host,
       players: playersWithRoles,
       game: room.game,
-      gameState: cleanState
+      gameState: cleanState,
+      settings: room.settings
     });
   }
 }
@@ -175,20 +178,22 @@ function stopGame(room) {
 // ============================================================
 const KelimeZinciri = {
   start(room) {
+    const settings = room.settings?.kelime || { turnTime: 20, minLength: 2 };
     room.gameState = {
       type: 'kelime-zinciri',
       currentPlayerIndex: 0,
       lastWord: null,
       lastLetter: null,
       usedWords: [],
-      timeLeft: 20,
+      timeLeft: settings.turnTime,
+      turnTime: settings.turnTime,
       timerId: null,
       messages: [],
       gameOver: false,
       winner: null
     };
     // Puanları sıfırla
-    room.players.forEach(p => p.score = 0);
+    room.players.forEach(p => { p.score = 0; p.eliminated = false; });
     this.startTurn(room);
     broadcastRoom(room.code);
   },
@@ -196,7 +201,7 @@ const KelimeZinciri = {
   startTurn(room) {
     const state = room.gameState;
     if (state.timerId) clearInterval(state.timerId);
-    state.timeLeft = 20;
+    state.timeLeft = state.turnTime || 20;
 
     state.timerId = setInterval(() => {
       state.timeLeft--;
@@ -208,6 +213,19 @@ const KelimeZinciri = {
     }, 1000);
   },
 
+  // ğ ile biten kelime için kullanılabilir bir harf bul
+  // (Türkçe'de ğ ile başlayan kelime yok)
+  getNextLetter(word) {
+    let last = word[word.length - 1];
+    if (last !== 'ğ') return last;
+    // ğ ise: bir önceki sesli harfi ara
+    const vowels = ['a','e','ı','i','o','ö','u','ü'];
+    for (let i = word.length - 2; i >= 0; i--) {
+      if (vowels.includes(word[i])) return word[i];
+    }
+    return 'a'; // fallback
+  },
+
   submitWord(room, playerId, word) {
     const state = room.gameState;
     if (!state || state.gameOver) return;
@@ -216,12 +234,22 @@ const KelimeZinciri = {
     if (!currentPlayer || currentPlayer.id !== playerId) return;
 
     word = word.trim().toLocaleLowerCase('tr-TR');
-    if (word.length < 2) {
-      io.to(playerId).emit('kelime:error', { message: 'Kelime çok kısa!' });
+    
+    const settings = room.settings?.kelime || {};
+    const minLength = settings.minLength || 2;
+    
+    if (word.length < minLength) {
+      io.to(playerId).emit('kelime:error', { message: `Kelime en az ${minLength} harf olmalı!` });
       return;
     }
 
-    // İlk kelime mi?
+    // Sadece Türkçe harf/boşluk kontrolü
+    if (!/^[a-zçğıöşüâîû ]+$/i.test(word)) {
+      io.to(playerId).emit('kelime:error', { message: 'Sadece Türkçe harfler kullan!' });
+      return;
+    }
+
+    // İlk kelime değilse, doğru harfle başlamalı
     if (state.lastLetter && word[0] !== state.lastLetter) {
       io.to(playerId).emit('kelime:error', { 
         message: `Kelime "${state.lastLetter.toUpperCase()}" harfi ile başlamalı!` 
@@ -237,9 +265,17 @@ const KelimeZinciri = {
     // Geçerli kelime
     state.usedWords.push(word);
     state.lastWord = word;
-    state.lastLetter = word[word.length - 1];
+    state.lastLetter = this.getNextLetter(word); // ğ ise sesli harfe atla
+    
+    // ğ ile bittiyse mesajda belirt
+    const trueEnding = word[word.length - 1];
+    let displayWord = word;
+    if (trueEnding === 'ğ') {
+      displayWord = `${word} → sıradaki harf: ${state.lastLetter.toUpperCase()}`;
+    }
+    
     currentPlayer.score += word.length; // Uzun kelime daha çok puan
-    state.messages.push({ player: currentPlayer.name, word, valid: true });
+    state.messages.push({ player: currentPlayer.name, word: displayWord, valid: true });
 
     // Mesaj geçmişini kısa tut
     if (state.messages.length > 15) state.messages.shift();
@@ -302,11 +338,11 @@ const KelimeZinciri = {
 // HAFIZA OYUNU
 // ============================================================
 const Hafiza = {
-  EMOJIS: ['🎮','🎲','🎯','🎨','🎭','🎪','🎸','🎺','🚀','⭐','🌈','🍕','🍔','🍩','🦄','🐉','🦊','🐼'],
+  EMOJIS: ['🎮','🎲','🎯','🎨','🎭','🎪','🎸','🎺','🚀','⭐','🌈','🍕','🍔','🍩','🦄','🐉','🦊','🐼','🐶','🐱','🐰','🦁','🐸','🦋','🍎','🍌','🍇','🍉','🌺','🌻','🍄','⚽','🏀','🎁'],
 
   start(room) {
-    // 8 çift = 16 kart (3-4 kişi için ideal)
-    const pairCount = 8;
+    const settings = room.settings?.hafiza || { pairCount: 8 };
+    const pairCount = Math.min(settings.pairCount, this.EMOJIS.length);
     const selected = [...this.EMOJIS].sort(() => Math.random() - 0.5).slice(0, pairCount);
     const cards = [...selected, ...selected]
       .sort(() => Math.random() - 0.5)
@@ -315,8 +351,9 @@ const Hafiza = {
     room.gameState = {
       type: 'hafiza',
       cards,
+      pairCount,
       currentPlayerIndex: 0,
-      flippedIndices: [], // Şu an açık olan kartların indexleri
+      flippedIndices: [],
       lockBoard: false,
       gameOver: false,
       winner: null
@@ -386,26 +423,25 @@ const Hafiza = {
 // ÇİZİM-TAHMİN OYUNU (Gartic tarzı)
 // ============================================================
 const Cizim = {
-  ROUND_TIME: 75, // saniye
-  TOTAL_ROUNDS: 3, // her oyuncu kaç kez çizecek
-
   start(room) {
+    const settings = room.settings?.cizim || { roundTime: 75, totalRounds: 3 };
     room.players.forEach(p => { p.score = 0; p.eliminated = false; });
     room.gameState = {
       type: 'cizim',
       drawerIndex: 0,
       currentWord: null,
-      wordHint: null, // "_ _ _ a _" gibi
-      timeLeft: this.ROUND_TIME,
+      wordHint: null,
+      timeLeft: settings.roundTime,
+      roundTime: settings.roundTime,
       timerId: null,
-      strokes: [], // tüm çizim noktaları
-      guesses: [], // { player, text, correct }
-      correctGuessers: [], // bu turda doğru bilenler
+      strokes: [],
+      guesses: [],
+      correctGuessers: [],
       roundsPlayed: 0,
-      totalRounds: room.players.length * this.TOTAL_ROUNDS,
+      totalRounds: room.players.length * settings.totalRounds,
       gameOver: false,
       winner: null,
-      phase: 'drawing' // 'drawing' | 'roundEnd' | 'gameOver'
+      phase: 'drawing'
     };
     this.startRound(room);
   },
@@ -423,7 +459,7 @@ const Cizim = {
     state.currentWord = pool[Math.floor(Math.random() * pool.length)];
     state.wordHint = this.generateHint(state.currentWord);
 
-    state.timeLeft = this.ROUND_TIME;
+    state.timeLeft = state.roundTime;
     state.strokes = [];
     state.guesses = [];
     state.correctGuessers = [];
@@ -492,7 +528,7 @@ const Cizim = {
       // Doğru tahmin!
       state.correctGuessers.push(playerId);
       // Puan: kalan süreye göre 5-15 arası
-      const points = 5 + Math.floor((state.timeLeft / this.ROUND_TIME) * 10);
+      const points = 5 + Math.floor((state.timeLeft / state.roundTime) * 10);
       player.score += points;
       // Çizen de puan alır (her doğru tahmin için 5)
       drawer.score += 5;
@@ -563,22 +599,24 @@ const Trivia = {
   TOTAL_QUESTIONS: 10,
 
   start(room) {
+    const settings = room.settings?.trivia || { questionTime: 15, totalQuestions: 10 };
     room.players.forEach(p => { p.score = 0; p.eliminated = false; });
 
-    // Rastgele 10 soru seç
+    // Rastgele soru seç
     const shuffled = [...TRIVIA_QUESTIONS].sort(() => Math.random() - 0.5);
-    const selected = shuffled.slice(0, this.TOTAL_QUESTIONS);
+    const selected = shuffled.slice(0, settings.totalQuestions);
 
     room.gameState = {
       type: 'trivia',
       questions: selected,
       currentIndex: 0,
       currentQuestion: null,
-      timeLeft: this.QUESTION_TIME,
+      timeLeft: settings.questionTime,
+      questionTime: settings.questionTime,
       timerId: null,
-      answers: {}, // { playerId: { answerIndex, timeUsed } }
-      phase: 'question', // 'question' | 'reveal' | 'gameOver'
-      lastAnswers: null, // önceki sorunun sonuçları
+      answers: {},
+      phase: 'question',
+      lastAnswers: null,
       gameOver: false,
       winner: null
     };
@@ -590,7 +628,6 @@ const Trivia = {
     if (state.timerId) clearInterval(state.timerId);
 
     const q = state.questions[state.currentIndex];
-    // Doğru cevabı oyunculara gönderme!
     state.currentQuestion = {
       number: state.currentIndex + 1,
       total: state.questions.length,
@@ -598,7 +635,7 @@ const Trivia = {
       options: q.a,
       category: q.cat
     };
-    state.timeLeft = this.QUESTION_TIME;
+    state.timeLeft = state.questionTime;
     state.answers = {};
     state.phase = 'question';
     state.lastAnswers = null;
@@ -617,18 +654,16 @@ const Trivia = {
   submitAnswer(room, playerId, answerIndex) {
     const state = room.gameState;
     if (!state || state.phase !== 'question') return;
-    if (state.answers[playerId] !== undefined) return; // zaten cevapladı
+    if (state.answers[playerId] !== undefined) return;
     if (answerIndex < 0 || answerIndex > 3) return;
 
-    const timeUsed = this.QUESTION_TIME - state.timeLeft;
+    const timeUsed = state.questionTime - state.timeLeft;
     state.answers[playerId] = { answerIndex, timeUsed };
 
-    // Tüm oyuncular cevapladıysa erken bitir
     const activeCount = room.players.length;
     if (Object.keys(state.answers).length >= activeCount) {
       setTimeout(() => this.revealAnswer(room), 500);
     } else {
-      // Sadece kaç kişi cevapladı bilgisini yolla
       io.to(room.code).emit('trivia:answerCount', {
         count: Object.keys(state.answers).length,
         total: activeCount
@@ -651,8 +686,7 @@ const Trivia = {
       let points = 0;
       if (ans && ans.answerIndex === q.correct) {
         correct = true;
-        // Hızlı cevap daha çok puan: max 100, min 50
-        const timeFactor = 1 - (ans.timeUsed / this.QUESTION_TIME);
+        const timeFactor = 1 - (ans.timeUsed / state.questionTime);
         points = 50 + Math.round(50 * timeFactor);
         player.score += points;
       }
@@ -699,22 +733,20 @@ const Trivia = {
 // VAMPİR KÖYLÜ
 // ============================================================
 const Vampir = {
-  DISCUSSION_TIME: 60, // gündüz tartışma
-  VOTE_TIME: 20,       // gündüz oylama
-  NIGHT_TIME: 25,      // gece eylemleri
-
   start(room) {
     if (room.players.length < 4) {
       io.to(room.host).emit('room:error', { message: 'Vampir Köylü en az 4 oyuncu gerektirir!' });
       return false;
     }
 
-    // Rol dağıtımı
-    // 4-5 kişi: 1 vampir, 1 doktor, 1 dedektif, gerisi köylü
-    // 6-7 kişi: 2 vampir, 1 doktor, 1 dedektif, gerisi köylü
-    // 8 kişi: 2 vampir, 1 doktor, 1 dedektif, gerisi köylü
+    const settings = room.settings?.vampir || {
+      discussionTime: 60, voteTime: 20, nightTime: 25, extraVampire: false
+    };
+
+    // Rol dağıtımı: 4-5 kişide normal 1 vampir (extraVampire açıksa 2), 6+ kişide 2 vampir
     const n = room.players.length;
-    let vampireCount = n <= 5 ? 1 : 2;
+    let vampireCount = n <= 5 ? (settings.extraVampire ? 2 : 1) : 2;
+    if (vampireCount >= n - 2) vampireCount = Math.max(1, n - 3); // doktor+dedektif+1 köylü garanti
     
     const roles = [];
     for (let i = 0; i < vampireCount; i++) roles.push('vampir');
@@ -747,18 +779,21 @@ const Vampir = {
 
     room.gameState = {
       type: 'vampir',
-      phase: 'night',         // 'night' | 'dayDiscussion' | 'dayVote' | 'reveal' | 'gameOver'
+      phase: 'night',
       dayNumber: 1,
-      timeLeft: this.NIGHT_TIME,
+      timeLeft: settings.nightTime,
+      nightTime: settings.nightTime,
+      discussionTime: settings.discussionTime,
+      voteTime: settings.voteTime,
       timerId: null,
       nightActions: {
-        vampireTargets: {},   // { vampirId: targetId }
+        vampireTargets: {},
         doctorTarget: null,
         detectiveTarget: null
       },
-      votes: {},              // { voterId: targetId }
-      events: [],             // gece/gün olayları
-      chat: [],               // gündüz tartışma sohbeti
+      votes: {},
+      events: [],
+      chat: [],
       gameOver: false,
       winner: null
     };
@@ -773,13 +808,13 @@ const Vampir = {
     state.phase = phase;
 
     if (phase === 'night') {
-      state.timeLeft = this.NIGHT_TIME;
+      state.timeLeft = state.nightTime;
       state.nightActions = { vampireTargets: {}, doctorTarget: null, detectiveTarget: null };
     } else if (phase === 'dayDiscussion') {
-      state.timeLeft = this.DISCUSSION_TIME;
+      state.timeLeft = state.discussionTime;
       state.chat = [];
     } else if (phase === 'dayVote') {
-      state.timeLeft = this.VOTE_TIME;
+      state.timeLeft = state.voteTime;
       state.votes = {};
     }
 
@@ -1050,6 +1085,7 @@ const Yilan = {
   start(room) {
     if (room.players.length < 2) return false;
 
+    const settings = room.settings?.yilan || { duration: 90, foodCount: 30, speed: 3 };
     const colors = ['#ff3e8a', '#00d4ff', '#ffd93d', '#6bcf7f', '#a86bff', '#ff9f4a', '#4ade80', '#f472b6'];
     const snakes = {};
     room.players.forEach((p, i) => {
@@ -1063,7 +1099,7 @@ const Yilan = {
           x: startX - j * 10,
           y: startY
         })),
-        direction: { x: 1, y: 0 }, // sağa doğru
+        direction: { x: 1, y: 0 },
         nextDirection: { x: 1, y: 0 },
         alive: true,
         score: 0
@@ -1072,7 +1108,7 @@ const Yilan = {
     });
 
     const foods = [];
-    for (let i = 0; i < this.FOOD_COUNT; i++) {
+    for (let i = 0; i < settings.foodCount; i++) {
       foods.push(this.randomFood());
     }
 
@@ -1080,7 +1116,10 @@ const Yilan = {
       type: 'yilan',
       snakes,
       foods,
-      timeLeft: this.GAME_DURATION,
+      timeLeft: settings.duration,
+      duration: settings.duration,
+      foodCount: settings.foodCount,
+      speed: settings.speed,
       tickId: null,
       timerId: null,
       gameOver: false,
@@ -1122,9 +1161,10 @@ const Yilan = {
       
       snake.direction = snake.nextDirection;
       const head = snake.body[0];
+      const speed = state.speed || this.SPEED;
       const newHead = {
-        x: head.x + snake.direction.x * this.SPEED,
-        y: head.y + snake.direction.y * this.SPEED
+        x: head.x + snake.direction.x * speed,
+        y: head.y + snake.direction.y * speed
       };
 
       // Duvar çarpması
@@ -1424,11 +1464,12 @@ const UnoOyun = {
   start(room) {
     if (room.players.length < 2) return false;
     
+    const settings = room.settings?.uno || { initialHand: 7 };
     const deck = this.buildDeck();
     const hands = {};
     room.players.forEach(p => {
       hands[p.id] = [];
-      for (let i = 0; i < this.INITIAL_HAND; i++) {
+      for (let i = 0; i < settings.initialHand; i++) {
         hands[p.id].push(deck.pop());
       }
       p.score = 0;
@@ -1604,6 +1645,46 @@ const UnoOyun = {
 };
 
 // ============================================================
+// VARSAYILAN OYUN AYARLARI
+// ============================================================
+const DEFAULT_SETTINGS = {
+  kelime: {
+    turnTime: 20,      // saniye
+    minLength: 2       // minimum kelime uzunluğu
+  },
+  hafiza: {
+    pairCount: 8       // 8 çift = 16 kart (6/8/10/12 olabilir)
+  },
+  cizim: {
+    roundTime: 75,     // her tur saniye
+    totalRounds: 3     // her oyuncu kaç kez çizer
+  },
+  trivia: {
+    questionTime: 15,
+    totalQuestions: 10
+  },
+  vampir: {
+    discussionTime: 60,
+    voteTime: 20,
+    nightTime: 25,
+    extraVampire: false // 4-5 kişide 2. vampir
+  },
+  yilan: {
+    duration: 90,
+    foodCount: 30,
+    speed: 3
+  },
+  uno: {
+    initialHand: 7
+  }
+  // Amiral Battı'da ayar yok (klasik kurallar)
+};
+
+function cloneSettings() {
+  return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+}
+
+// ============================================================
 // SOCKET.IO BAĞLANTI YÖNETİMİ
 // ============================================================
 io.on('connection', (socket) => {
@@ -1619,7 +1700,8 @@ io.on('connection', (socket) => {
       host: socket.id,
       players: [player],
       game: null,
-      gameState: null
+      gameState: null,
+      settings: cloneSettings()
     };
     socket.join(code);
     socket.emit('room:joined', { code, you: { id: socket.id, name } });
@@ -1653,6 +1735,53 @@ io.on('connection', (socket) => {
   // --- Odadan Ayrıl ---
   socket.on('room:leave', () => {
     handleDisconnect(socket);
+  });
+
+  // --- Ayarları Güncelle (sadece host) ---
+  socket.on('room:settings', ({ gameType, settings }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room } = result;
+    if (room.host !== socket.id) {
+      socket.emit('room:error', { message: 'Sadece host ayarları değiştirebilir!' });
+      return;
+    }
+    if (room.game) {
+      socket.emit('room:error', { message: 'Oyun sırasında ayar değiştirilemez!' });
+      return;
+    }
+    if (!room.settings[gameType]) return;
+    
+    // Sadece bilinen alanları güncelle ve sınırlar dahilinde
+    const limits = {
+      kelime: { turnTime: [5, 60], minLength: [2, 6] },
+      hafiza: { pairCount: [4, 18] },
+      cizim: { roundTime: [30, 180], totalRounds: [1, 5] },
+      trivia: { questionTime: [5, 30], totalQuestions: [5, 30] },
+      vampir: { 
+        discussionTime: [20, 180], 
+        voteTime: [10, 60], 
+        nightTime: [10, 60],
+        extraVampire: 'bool'
+      },
+      yilan: { duration: [30, 300], foodCount: [10, 60], speed: [2, 5] },
+      uno: { initialHand: [5, 10] }
+    };
+    
+    const gameLimits = limits[gameType];
+    if (!gameLimits) return;
+    
+    for (const key in settings) {
+      const lim = gameLimits[key];
+      if (!lim) continue;
+      const v = settings[key];
+      if (lim === 'bool') {
+        room.settings[gameType][key] = !!v;
+      } else if (Array.isArray(lim) && typeof v === 'number') {
+        room.settings[gameType][key] = Math.max(lim[0], Math.min(lim[1], Math.round(v)));
+      }
+    }
+    broadcastRoom(room.code);
   });
 
   // --- Oyun Başlat (sadece host) ---

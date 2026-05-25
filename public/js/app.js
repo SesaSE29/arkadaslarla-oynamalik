@@ -12,7 +12,8 @@ const state = {
   players: [],
   host: null,
   game: null,
-  gameState: null
+  gameState: null,
+  settings: null    // sunucudan gelen oyun ayarları
 };
 
 // ============================================================
@@ -90,6 +91,99 @@ document.getElementById('btn-copy-code').addEventListener('click', () => {
     showToast('Kopyalanamadı, manuel paylaş: ' + state.roomCode);
   });
 });
+
+// ============================================================
+// AYARLAR MODALI
+// ============================================================
+const settingsModal = document.getElementById('settings-modal');
+let isSettingsBuilding = false; // sunucudan gelirken event tetiklenmesini engelle
+
+document.getElementById('btn-settings').addEventListener('click', () => {
+  settingsModal.style.display = 'flex';
+  applySettingsToUI();
+});
+document.getElementById('settings-close').addEventListener('click', () => {
+  settingsModal.style.display = 'none';
+});
+settingsModal.addEventListener('click', (e) => {
+  if (e.target === settingsModal) settingsModal.style.display = 'none';
+});
+
+// Tab değiştirme
+document.querySelectorAll('.settings-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.settings-pane').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelector(`.settings-pane[data-pane="${tab.dataset.tab}"]`).classList.add('active');
+  });
+});
+
+// Slider/checkbox değişimleri - sunucuya yolla
+document.querySelectorAll('.settings-pane input[type="range"], .settings-pane input[type="checkbox"]').forEach(input => {
+  input.addEventListener('input', () => {
+    if (isSettingsBuilding) return;
+    const game = input.dataset.game;
+    const key = input.dataset.key;
+    
+    // Görseli güncelle
+    if (input.type === 'range') {
+      const valEl = document.getElementById(`set-${game}-${key}-val`);
+      if (valEl) valEl.textContent = input.value;
+      // Hafıza için kart sayısı
+      if (game === 'hafiza' && key === 'pairCount') {
+        const cardsEl = document.getElementById('set-hafiza-cards');
+        if (cardsEl) cardsEl.textContent = parseInt(input.value) * 2;
+      }
+    }
+    
+    // Host değilse gönderme
+    if (state.you?.id !== state.host) return;
+    
+    // Sunucuya yolla
+    const value = input.type === 'checkbox' ? input.checked : parseInt(input.value);
+    socket.emit('room:settings', {
+      gameType: game,
+      settings: { [key]: value }
+    });
+  });
+});
+
+// Sunucudan gelen ayarları UI'a uygula
+function applySettingsToUI() {
+  if (!state.settings) return;
+  isSettingsBuilding = true;
+  
+  for (const game in state.settings) {
+    const cfg = state.settings[game];
+    for (const key in cfg) {
+      const input = document.getElementById(`set-${game}-${key}`);
+      if (!input) continue;
+      if (input.type === 'checkbox') {
+        input.checked = !!cfg[key];
+      } else {
+        input.value = cfg[key];
+        const valEl = document.getElementById(`set-${game}-${key}-val`);
+        if (valEl) valEl.textContent = cfg[key];
+      }
+    }
+  }
+  
+  // Hafıza özel: kart sayısı
+  if (state.settings.hafiza) {
+    const cardsEl = document.getElementById('set-hafiza-cards');
+    if (cardsEl) cardsEl.textContent = state.settings.hafiza.pairCount * 2;
+  }
+  
+  // Host olmayan kişide tüm input'ları disable et
+  const isHost = state.you?.id === state.host;
+  document.querySelectorAll('.settings-pane input').forEach(i => {
+    i.disabled = !isHost;
+  });
+  document.getElementById('settings-host-warning').style.display = isHost ? 'none' : 'block';
+  
+  isSettingsBuilding = false;
+}
 
 // Oyun seçme kartları
 document.querySelectorAll('.game-card:not(.disabled)').forEach(card => {
@@ -1009,14 +1103,15 @@ document.getElementById('amiral-back-lobby').addEventListener('click', exitGame)
 document.getElementById('amiral-rotate').addEventListener('click', () => {
   amiralState.orientation = amiralState.orientation === 'horizontal' ? 'vertical' : 'horizontal';
   updateCurrentShipLabel();
-  renderAmiralPlacement();
+  updatePlacementVisuals();
 });
 document.getElementById('amiral-restart').addEventListener('click', () => {
   amiralState.currentShipIndex = 0;
   amiralState.placedShips = [];
   amiralState.myReady = false;
+  document.getElementById('amiral-waiting').style.display = 'none';
   updateCurrentShipLabel();
-  renderAmiralPlacement();
+  updatePlacementVisuals();
 });
 document.getElementById('amiral-confirm').addEventListener('click', () => {
   socket.emit('amiral:place', { ships: amiralState.placedShips });
@@ -1068,61 +1163,103 @@ function canPlaceShip(cells) {
   return true;
 }
 
-function renderAmiralPlacement() {
+function renderAmiralPlacement(forceRedraw = false) {
   const board = document.getElementById('amiral-placement-board');
-  board.innerHTML = '';
+  
+  // Sadece ilk açılışta veya zorla istenirse tam yeniden çiz
+  if (forceRedraw || board.children.length !== 64) {
+    board.innerHTML = '';
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const cell = document.createElement('div');
+        cell.className = 'amiral-cell';
+        cell.dataset.x = x;
+        cell.dataset.y = y;
+        board.appendChild(cell);
+      }
+    }
+    // Event listener'ları sadece bir kez, board'a (event delegation)
+    if (!board.dataset.bound) {
+      board.dataset.bound = '1';
+      board.addEventListener('mousemove', (e) => {
+        const cell = e.target.closest('.amiral-cell');
+        if (!cell) return;
+        const x = parseInt(cell.dataset.x);
+        const y = parseInt(cell.dataset.y);
+        if (amiralState.hoverCell?.x === x && amiralState.hoverCell?.y === y) return;
+        amiralState.hoverCell = { x, y };
+        updatePlacementVisuals();
+      });
+      board.addEventListener('mouseleave', () => {
+        amiralState.hoverCell = null;
+        updatePlacementVisuals();
+      });
+      board.addEventListener('click', (e) => {
+        const cell = e.target.closest('.amiral-cell');
+        if (!cell) return;
+        const idx = amiralState.currentShipIndex;
+        if (idx >= amiralState.shipSizes.length) return;
+        const x = parseInt(cell.dataset.x);
+        const y = parseInt(cell.dataset.y);
+        const cells = getShipCells(x, y, amiralState.shipSizes[idx], amiralState.orientation);
+        if (canPlaceShip(cells)) {
+          amiralState.placedShips.push({ name: amiralState.shipNames[idx], cells });
+          amiralState.currentShipIndex++;
+          updateCurrentShipLabel();
+          updatePlacementVisuals();
+        } else {
+          showToast('Buraya yerleştiremezsin!', 'error');
+        }
+      });
+      // Mobil destek için touch
+      board.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const cell = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.amiral-cell');
+        if (!cell) return;
+        const x = parseInt(cell.dataset.x);
+        const y = parseInt(cell.dataset.y);
+        amiralState.hoverCell = { x, y };
+        updatePlacementVisuals();
+      }, { passive: false });
+    }
+  }
+  updatePlacementVisuals();
+}
+
+// Sadece görseli güncelle (DOM elementlerini yeniden yaratma)
+function updatePlacementVisuals() {
+  const board = document.getElementById('amiral-placement-board');
+  if (!board || board.children.length !== 64) return;
   
   const idx = amiralState.currentShipIndex;
   const currentSize = idx < amiralState.shipSizes.length ? amiralState.shipSizes[idx] : 0;
   
-  // Hover preview cells
   let previewCells = [];
   let previewBad = false;
   if (amiralState.hoverCell && idx < amiralState.shipSizes.length) {
     previewCells = getShipCells(amiralState.hoverCell.x, amiralState.hoverCell.y, currentSize, amiralState.orientation);
     previewBad = !canPlaceShip(previewCells);
   }
-
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 8; x++) {
-      const cell = document.createElement('div');
-      cell.className = 'amiral-cell';
-
-      // Yerleşmiş gemi var mı?
-      let hasShip = false;
-      for (const ship of amiralState.placedShips) {
-        if (ship.cells.some(c => c.x === x && c.y === y)) {
-          hasShip = true;
-          break;
-        }
+  
+  for (let i = 0; i < 64; i++) {
+    const cell = board.children[i];
+    const x = parseInt(cell.dataset.x);
+    const y = parseInt(cell.dataset.y);
+    
+    cell.className = 'amiral-cell';
+    
+    // Yerleşmiş gemi?
+    for (const ship of amiralState.placedShips) {
+      if (ship.cells.some(c => c.x === x && c.y === y)) {
+        cell.classList.add('ship');
+        break;
       }
-      if (hasShip) cell.classList.add('ship');
-
-      // Preview var mı?
-      if (previewCells.some(c => c.x === x && c.y === y)) {
-        cell.classList.add(previewBad ? 'preview-bad' : 'preview');
-      }
-
-      // Olaylar
-      if (idx < amiralState.shipSizes.length) {
-        cell.addEventListener('mouseenter', () => {
-          amiralState.hoverCell = { x, y };
-          renderAmiralPlacement();
-        });
-        cell.addEventListener('click', () => {
-          const cells = getShipCells(x, y, currentSize, amiralState.orientation);
-          if (canPlaceShip(cells)) {
-            amiralState.placedShips.push({ name: amiralState.shipNames[idx], cells });
-            amiralState.currentShipIndex++;
-            amiralState.hoverCell = null;
-            updateCurrentShipLabel();
-            renderAmiralPlacement();
-          } else {
-            showToast('Buraya yerleştiremezsin!', 'error');
-          }
-        });
-      }
-      board.appendChild(cell);
+    }
+    
+    // Preview?
+    if (previewCells.some(c => c.x === x && c.y === y)) {
+      cell.classList.add(previewBad ? 'preview-bad' : 'preview');
     }
   }
 }
@@ -1246,18 +1383,33 @@ function renderAmiral() {
     
     if (!isParticipant) {
       document.getElementById('amiral-status').textContent = '👀 İzleyicisin. Oyuncular gemilerini yerleştiriyor...';
-      document.getElementById('amiral-placement-board').innerHTML = '<p style="text-align:center;padding:40px;color:var(--color-text-light)">2 oyuncu yerleştirme yapıyor...</p>';
+      const board = document.getElementById('amiral-placement-board');
+      if (board.children.length !== 1 || board.firstChild?.tagName !== 'P') {
+        board.innerHTML = '<p style="text-align:center;padding:40px;color:var(--color-text-light)">2 oyuncu yerleştirme yapıyor...</p>';
+      }
+      document.querySelector('.amiral-place-controls').style.display = 'none';
     } else {
+      document.querySelector('.amiral-place-controls').style.display = 'flex';
       document.getElementById('amiral-status').textContent = amiralState.myReady ? 
         'Hazırsın! Rakip bekleniyor...' : 'Gemilerini yerleştir!';
+      
       if (!amiralState.myReady) {
-        renderAmiralPlacement();
+        // Board zaten çizilmemişse çiz (yoksa sadece görseli güncelle)
+        const board = document.getElementById('amiral-placement-board');
+        if (board.children.length !== 64) {
+          renderAmiralPlacement(true);
+        } else {
+          updatePlacementVisuals();
+        }
         updateCurrentShipLabel();
       }
       // Karşı taraf hazır mı kontrol
       const opponentReady = gs.players.some(pid => pid !== myId && gs.boards[pid]?.ready);
       if (amiralState.myReady && !opponentReady) {
         document.getElementById('amiral-waiting').style.display = 'block';
+      } else if (amiralState.myReady && opponentReady) {
+        // İki taraf da hazır, savaş başlayacak
+        document.getElementById('amiral-waiting').style.display = 'none';
       }
     }
   } else if (gs.phase === 'battle') {
@@ -1285,6 +1437,14 @@ function resetAmiralState() {
   amiralState.orientation = 'horizontal';
   amiralState.hoverCell = null;
   amiralState.myReady = false;
+  // Placement board'u sıfırla (event delegation bayrağı dahil)
+  const board = document.getElementById('amiral-placement-board');
+  if (board) {
+    board.innerHTML = '';
+    delete board.dataset.bound;
+  }
+  const waiting = document.getElementById('amiral-waiting');
+  if (waiting) waiting.style.display = 'none';
 }
 
 // ============================================================
@@ -1454,10 +1614,16 @@ socket.on('room:update', (data) => {
   }));
   state.game = data.game;
   state.gameState = data.gameState;
+  state.settings = data.settings || state.settings;
 
   // Eliminated bilgisi gameState'ten geliyor
   if (data.gameState) {
     state.players = data.players;
+  }
+
+  // Ayarlar modalı açıksa güncelle
+  if (settingsModal && settingsModal.style.display === 'flex') {
+    applySettingsToUI();
   }
 
   // Hangi ekran?

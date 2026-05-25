@@ -2032,6 +2032,218 @@ input[type="text"]:focus {
 }
 
 /* ============================================================
+   AYARLAR MODALI
+   ============================================================ */
+.lobby-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 11, 46, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 16px;
+  animation: fadeIn 0.25s;
+}
+
+.settings-content {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  width: 100%;
+  max-width: 640px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 2px solid var(--color-surface-soft);
+}
+
+.settings-header h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.5rem;
+}
+
+.settings-close {
+  background: var(--color-surface-soft);
+  border: none;
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  transition: transform 0.15s;
+}
+.settings-close:hover { transform: scale(1.1); background: var(--color-danger); color: white; }
+
+.settings-hint {
+  padding: 12px 24px 0;
+  color: var(--color-text-light);
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 12px 16px 0;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+}
+
+.settings-tab {
+  background: var(--color-surface-soft);
+  border: none;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-body);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  transition: background 0.15s, color 0.15s;
+  color: var(--color-text);
+}
+
+.settings-tab:hover {
+  background: #f0e5ff;
+}
+
+.settings-tab.active {
+  background: var(--color-primary);
+  color: white;
+}
+
+.settings-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.settings-pane {
+  display: none;
+}
+
+.settings-pane.active {
+  display: block;
+}
+
+.setting-row {
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setting-row label {
+  font-weight: 600;
+  color: var(--color-text);
+  font-size: 0.95rem;
+}
+
+.setting-value {
+  display: inline-block;
+  background: var(--color-primary);
+  color: white;
+  padding: 1px 10px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-display);
+  font-weight: 400;
+  min-width: 30px;
+  text-align: center;
+}
+
+.setting-info {
+  font-size: 0.8rem;
+  color: var(--color-text-light);
+  font-style: italic;
+}
+
+.setting-row input[type="range"] {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 8px;
+  background: var(--color-surface-soft);
+  border-radius: var(--radius-pill);
+  outline: none;
+  cursor: pointer;
+}
+.setting-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 24px; height: 24px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  transition: transform 0.15s;
+}
+.setting-row input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+.setting-row input[type="range"]::-moz-range-thumb {
+  width: 24px; height: 24px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.setting-row input[type="range"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.setting-row input[type="range"]:disabled::-webkit-slider-thumb {
+  background: #aaa;
+  cursor: not-allowed;
+}
+
+.toggle-row label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.toggle-row input[type="checkbox"] {
+  width: 20px; height: 20px;
+  cursor: pointer;
+  accent-color: var(--color-primary);
+}
+
+.toggle-row input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+
+.settings-host-warning {
+  background: #fff5e0;
+  border-left: 4px solid var(--color-accent-1);
+  padding: 12px 16px;
+  margin: 0 24px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  color: #6b5300;
+}
+
+/* ============================================================
    RESPONSIVE
    ============================================================ */
 @media (max-width: 640px) {
