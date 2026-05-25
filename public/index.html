@@ -154,6 +154,12 @@
       </div>
 
       <div class="kelime-board">
+        <div class="kelime-mode-bar" id="kelime-mode-bar">
+          <span class="mode-badge category-badge" id="kelime-category-badge">Serbest</span>
+          <span class="mode-badge mode-badge-mode" id="kelime-mode-badge">Son harf</span>
+          <span class="mode-badge mode-badge-dict" id="kelime-dict-badge" style="display:none">📖 Sözlük</span>
+        </div>
+
         <div class="kelime-status">
           <div class="current-turn">
             <span class="label">SIRA:</span>
@@ -168,9 +174,14 @@
           </div>
         </div>
 
+        <div class="kelime-skip-notice" id="kelime-skip-notice" style="display:none"></div>
+
         <div class="kelime-input-area" id="kelime-input-area">
           <input type="text" id="kelime-input" placeholder="Kelimeyi yaz..." autocomplete="off" />
           <button class="btn btn-primary" id="kelime-submit">Gönder</button>
+          <button class="btn btn-secondary btn-pass" id="kelime-pass" title="Turunu pas geç">
+            ⏭️ Pas <span class="pass-count" id="kelime-pass-count">0</span>
+          </button>
         </div>
         <p class="kelime-error" id="kelime-error"></p>
 
@@ -558,6 +569,42 @@
           <div class="setting-row">
             <label>Min. kelime uzunluğu: <span class="setting-value" id="set-kelime-minLength-val">2</span> harf</label>
             <input type="range" id="set-kelime-minLength" min="2" max="6" value="2" data-game="kelime" data-key="minLength"/>
+          </div>
+          <div class="setting-row">
+            <label>Can sayısı: <span class="setting-value" id="set-kelime-lives-val">1</span> can</label>
+            <input type="range" id="set-kelime-lives" min="1" max="5" value="1" data-game="kelime" data-key="lives"/>
+            <span class="setting-info">1 = ilk hatada elenirsin, 5 = çok affedici</span>
+          </div>
+          <div class="setting-row">
+            <label>Pas hakkı: <span class="setting-value" id="set-kelime-passesPerPlayer-val">1</span> pas/oyuncu</label>
+            <input type="range" id="set-kelime-passesPerPlayer" min="0" max="3" value="1" data-game="kelime" data-key="passesPerPlayer"/>
+            <span class="setting-info">Zorda kaldığında turu atlama hakkı</span>
+          </div>
+          <div class="setting-row">
+            <label>Kategori</label>
+            <select id="set-kelime-category" data-game="kelime" data-key="category" class="settings-select">
+              <option value="serbest">Serbest (her kelime)</option>
+              <option value="hayvan">🐾 Hayvan</option>
+              <option value="bitki">🌿 Bitki</option>
+              <option value="esya">🪑 Eşya</option>
+              <option value="ulke">🌍 Ülke</option>
+              <option value="yemek">🍽️ Yemek/İçecek</option>
+              <option value="a-yok">🚫 "A" harfsiz (zor mod)</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <label>Eşleşme modu</label>
+            <select id="set-kelime-matchMode" data-game="kelime" data-key="matchMode" class="settings-select">
+              <option value="son-harf">Son harf (klasik)</option>
+              <option value="kafiye">Kafiye (son 2 harf eşleşir)</option>
+            </select>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-kelime-useDictionary" data-game="kelime" data-key="useDictionary" checked/>
+              Sözlük kontrolü aç (uydurma kelime kabul edilmez)
+            </label>
+            <span class="setting-info">Kategori modlarında zaten kategori listesi ile kontrol edilir</span>
           </div>
         </div>
 

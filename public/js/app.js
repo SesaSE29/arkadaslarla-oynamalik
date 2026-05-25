@@ -119,29 +119,32 @@ document.querySelectorAll('.settings-tab').forEach(tab => {
   });
 });
 
-// Slider/checkbox değişimleri - sunucuya yolla
-document.querySelectorAll('.settings-pane input[type="range"], .settings-pane input[type="checkbox"]').forEach(input => {
-  input.addEventListener('input', () => {
+// Slider/checkbox/select değişimleri - sunucuya yolla
+document.querySelectorAll('.settings-pane input[type="range"], .settings-pane input[type="checkbox"], .settings-pane select').forEach(input => {
+  const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
+  input.addEventListener(eventName, () => {
     if (isSettingsBuilding) return;
     const game = input.dataset.game;
     const key = input.dataset.key;
-    
+    if (!game || !key) return;
+
     // Görseli güncelle
     if (input.type === 'range') {
       const valEl = document.getElementById(`set-${game}-${key}-val`);
       if (valEl) valEl.textContent = input.value;
-      // Hafıza için kart sayısı
       if (game === 'hafiza' && key === 'pairCount') {
         const cardsEl = document.getElementById('set-hafiza-cards');
         if (cardsEl) cardsEl.textContent = parseInt(input.value) * 2;
       }
     }
-    
-    // Host değilse gönderme
+
     if (state.you?.id !== state.host) return;
-    
-    // Sunucuya yolla
-    const value = input.type === 'checkbox' ? input.checked : parseInt(input.value);
+
+    let value;
+    if (input.type === 'checkbox') value = input.checked;
+    else if (input.tagName === 'SELECT') value = input.value;
+    else value = parseInt(input.value);
+
     socket.emit('room:settings', {
       gameType: game,
       settings: { [key]: value }
@@ -161,6 +164,8 @@ function applySettingsToUI() {
       if (!input) continue;
       if (input.type === 'checkbox') {
         input.checked = !!cfg[key];
+      } else if (input.tagName === 'SELECT') {
+        input.value = cfg[key];
       } else {
         input.value = cfg[key];
         const valEl = document.getElementById(`set-${game}-${key}-val`);
@@ -177,7 +182,7 @@ function applySettingsToUI() {
   
   // Host olmayan kişide tüm input'ları disable et
   const isHost = state.you?.id === state.host;
-  document.querySelectorAll('.settings-pane input').forEach(i => {
+  document.querySelectorAll('.settings-pane input, .settings-pane select').forEach(i => {
     i.disabled = !isHost;
   });
   document.getElementById('settings-host-warning').style.display = isHost ? 'none' : 'block';
@@ -248,6 +253,9 @@ document.getElementById('kelime-input').addEventListener('keydown', e => {
 });
 document.getElementById('kelime-exit').addEventListener('click', exitGame);
 document.getElementById('kelime-back-lobby').addEventListener('click', exitGame);
+document.getElementById('kelime-pass').addEventListener('click', () => {
+  socket.emit('kelime:pass');
+});
 
 function submitKelime() {
   const input = document.getElementById('kelime-input');
@@ -258,6 +266,16 @@ function submitKelime() {
   document.getElementById('kelime-error').textContent = '';
 }
 
+const CATEGORY_NAMES = {
+  'serbest': 'Serbest',
+  'hayvan': '🐾 Hayvan',
+  'bitki': '🌿 Bitki',
+  'esya': '🪑 Eşya',
+  'ulke': '🌍 Ülke',
+  'yemek': '🍽️ Yemek',
+  'a-yok': '🚫 "A" yok'
+};
+
 function renderKelimeZinciri() {
   const gs = state.gameState;
   if (!gs) return;
@@ -266,8 +284,37 @@ function renderKelimeZinciri() {
   const isMyTurn = currentPlayer && currentPlayer.id === state.you?.id;
 
   document.getElementById('kelime-current-player').textContent = currentPlayer ? currentPlayer.name : '-';
-  document.getElementById('kelime-letter').textContent = gs.lastLetter ? gs.lastLetter.toUpperCase() : '✨';
+
+  // Harf gösterimi: kafiye modunda 2 harf, normal modda 1 harf
+  const letterEl = document.getElementById('kelime-letter');
+  if (gs.matchMode === 'kafiye' && gs.lastTwoLetters) {
+    letterEl.textContent = gs.lastTwoLetters.toUpperCase();
+  } else {
+    letterEl.textContent = gs.lastLetter ? gs.lastLetter.toUpperCase() : '✨';
+  }
   document.getElementById('kelime-timer').textContent = gs.timeLeft;
+
+  // Mod rozetleri
+  const catBadge = document.getElementById('kelime-category-badge');
+  const modeBadge = document.getElementById('kelime-mode-badge');
+  const dictBadge = document.getElementById('kelime-dict-badge');
+  if (catBadge) catBadge.textContent = CATEGORY_NAMES[gs.category] || 'Serbest';
+  if (modeBadge) modeBadge.textContent = gs.matchMode === 'kafiye' ? '🎵 Kafiye (son 2 harf)' : 'Son harf';
+  if (dictBadge) {
+    const dictActive = gs.useDictionary && (!gs.category || gs.category === 'serbest' || gs.category === 'a-yok');
+    dictBadge.style.display = dictActive ? '' : 'none';
+  }
+
+  // Çıkmaz harf bildirimi
+  const skipNoticeEl = document.getElementById('kelime-skip-notice');
+  if (skipNoticeEl) {
+    if (gs.skipNotice && gs.skipNotice.message) {
+      skipNoticeEl.textContent = '↪ ' + gs.skipNotice.message;
+      skipNoticeEl.style.display = '';
+    } else {
+      skipNoticeEl.style.display = 'none';
+    }
+  }
 
   // Input alanı
   const inputArea = document.getElementById('kelime-input-area');
@@ -275,8 +322,9 @@ function renderKelimeZinciri() {
   if (isMyTurn && !gs.gameOver) {
     inputArea.classList.remove('locked');
     input.disabled = false;
-    input.placeholder = gs.lastLetter 
-      ? `"${gs.lastLetter.toUpperCase()}" ile başlayan kelime...` 
+    const startWith = (gs.matchMode === 'kafiye' && gs.lastTwoLetters) ? gs.lastTwoLetters : gs.lastLetter;
+    input.placeholder = startWith
+      ? `"${startWith.toUpperCase()}" ile başlayan kelime...`
       : 'İlk kelimeyi yaz!';
     setTimeout(() => input.focus(), 50);
   } else {
@@ -285,13 +333,24 @@ function renderKelimeZinciri() {
     input.placeholder = `${currentPlayer?.name || '...'} yazıyor...`;
   }
 
+  // Pas butonu
+  const passBtn = document.getElementById('kelime-pass');
+  const passCountEl = document.getElementById('kelime-pass-count');
+  const myPasses = (gs.passesLeft && state.you) ? (gs.passesLeft[state.you.id] || 0) : 0;
+  if (passCountEl) passCountEl.textContent = myPasses;
+  if (passBtn) {
+    const canPass = isMyTurn && !gs.gameOver && myPasses > 0;
+    passBtn.disabled = !canPass;
+    passBtn.style.display = (gs.maxPasses > 0) ? '' : 'none';
+  }
+
   // Kelime geçmişi
   const history = document.getElementById('kelime-history');
   if (gs.messages.length === 0) {
     history.innerHTML = '<p class="empty">Henüz kelime yok. İlk oyuncu başlasın!</p>';
   } else {
     history.innerHTML = gs.messages.map(m => `
-      <div class="entry ${m.valid ? '' : 'invalid'}">
+      <div class="entry ${m.valid ? '' : 'invalid'} ${m.pass ? 'is-pass' : ''}">
         <span class="player">${escapeHtml(m.player)}:</span>
         <span class="word">${escapeHtml(m.word)}</span>
       </div>
@@ -299,7 +358,7 @@ function renderKelimeZinciri() {
     history.scrollTop = history.scrollHeight;
   }
 
-  renderScoreboard('kelime-scoreboard', gs.currentPlayerIndex);
+  renderKelimeScoreboard(gs);
 
   // Oyun bitti mi?
   const gameOverEl = document.getElementById('kelime-gameover');
@@ -377,6 +436,35 @@ function renderScoreboard(elementId, activeIndex) {
     if (p.eliminated) pill.classList.add('eliminated');
     pill.innerHTML = `
       <span class="name">${escapeHtml(p.name)}</span>
+      <span class="score">${p.score || 0}</span>
+    `;
+    el.appendChild(pill);
+  });
+}
+
+// Kelime Zinciri için canlı skor tablosu (kalp ikonları + pas hakkı)
+function renderKelimeScoreboard(gs) {
+  const el = document.getElementById('kelime-scoreboard');
+  el.innerHTML = '';
+  state.players.forEach((p, i) => {
+    const pill = document.createElement('div');
+    pill.className = 'score-pill kelime-pill';
+    if (i === gs.currentPlayerIndex) pill.classList.add('active');
+    if (p.eliminated) pill.classList.add('eliminated');
+
+    const livesLeft = gs.lives ? (gs.lives[p.id] ?? 0) : 0;
+    const passesLeft = gs.passesLeft ? (gs.passesLeft[p.id] ?? 0) : 0;
+    const maxLives = gs.maxLives || 1;
+
+    let hearts = '';
+    for (let k = 0; k < maxLives; k++) {
+      hearts += `<span class="heart ${k < livesLeft ? 'filled' : 'empty'}">${k < livesLeft ? '❤️' : '🤍'}</span>`;
+    }
+
+    pill.innerHTML = `
+      <span class="name">${escapeHtml(p.name)}</span>
+      <span class="lives" title="Kalan can">${hearts}</span>
+      ${gs.maxPasses > 0 ? `<span class="pass-info" title="Kalan pas">⏭️${passesLeft}</span>` : ''}
       <span class="score">${p.score || 0}</span>
     `;
     el.appendChild(pill);
@@ -1681,6 +1769,22 @@ socket.on('kelime:error', ({ message }) => {
   if (errEl) {
     errEl.textContent = '❌ ' + message;
     setTimeout(() => { errEl.textContent = ''; }, 3000);
+  }
+});
+
+socket.on('kelime:skipped', ({ message }) => {
+  showToast('↪ ' + message, '');
+});
+
+socket.on('kelime:passUsed', ({ playerName }) => {
+  showToast(`⏭️ ${playerName} pas geçti`, '');
+});
+
+socket.on('kelime:lifeLost', ({ playerName, livesLeft }) => {
+  if (livesLeft > 0) {
+    showToast(`💔 ${playerName} can kaybetti (${livesLeft} kaldı)`, '');
+  } else {
+    showToast(`☠️ ${playerName} elendi!`, 'error');
   }
 });
 

@@ -6,9 +6,54 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const { Server } = require('socket.io');
 const WORDS = require('./words');
 const TRIVIA_QUESTIONS = require('./trivia');
+
+// ============================================================
+// SÖZLÜK VE KATEGORİ YÜKLEME (Kelime Zinciri için)
+// ============================================================
+let DICTIONARY = new Set();
+const DICT_BY_FIRST_LETTER = {};
+try {
+  const dictPath = path.join(__dirname, 'data', 'tr-dictionary.txt');
+  const raw = fs.readFileSync(dictPath, 'utf8');
+  const lines = raw.split(/\r?\n/)
+    .map(l => l.trim().toLocaleLowerCase('tr-TR'))
+    .filter(l => l && /^[a-zçğıöşüâîû]+$/i.test(l));
+  DICTIONARY = new Set(lines);
+  for (const w of lines) {
+    const first = w[0];
+    if (!DICT_BY_FIRST_LETTER[first]) DICT_BY_FIRST_LETTER[first] = new Set();
+    DICT_BY_FIRST_LETTER[first].add(w);
+  }
+  console.log(`Sözlük yüklendi: ${DICTIONARY.size} kelime`);
+} catch (e) {
+  console.warn('Sözlük yüklenemedi (devam ediliyor):', e.message);
+}
+
+const CATEGORIES = {};
+const CATEGORY_LABELS = {
+  'serbest': 'Serbest',
+  'hayvan': 'Hayvan',
+  'bitki': 'Bitki',
+  'esya': 'Eşya',
+  'ulke': 'Ülke',
+  'yemek': 'Yemek/İçecek',
+  'a-yok': '"A" harfsiz'
+};
+for (const cat of ['hayvan', 'bitki', 'esya', 'ulke', 'yemek']) {
+  try {
+    const list = require(`./data/categories/${cat}`)
+      .map(w => w.toLocaleLowerCase('tr-TR'));
+    CATEGORIES[cat] = new Set(list);
+    console.log(`Kategori "${cat}": ${CATEGORIES[cat].size} kelime`);
+  } catch (e) {
+    console.warn(`Kategori "${cat}" yüklenemedi:`, e.message);
+    CATEGORIES[cat] = new Set();
+  }
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -178,22 +223,46 @@ function stopGame(room) {
 // ============================================================
 const KelimeZinciri = {
   start(room) {
-    const settings = room.settings?.kelime || { turnTime: 20, minLength: 2 };
+    const s = room.settings?.kelime || {};
+    const maxLives = Math.max(1, Math.min(5, s.lives || 1));
+    const maxPasses = Math.max(0, Math.min(3, (s.passesPerPlayer ?? 1)));
+    const category = (s.category && CATEGORY_LABELS[s.category]) ? s.category : 'serbest';
+    const matchMode = (s.matchMode === 'kafiye') ? 'kafiye' : 'son-harf';
+    const useDictionary = s.useDictionary !== false;
+    const turnTime = s.turnTime || 20;
+
+    const lives = {};
+    const passesLeft = {};
+    for (const p of room.players) {
+      lives[p.id] = maxLives;
+      passesLeft[p.id] = maxPasses;
+      p.score = 0;
+      p.eliminated = false;
+    }
+
     room.gameState = {
       type: 'kelime-zinciri',
       currentPlayerIndex: 0,
       lastWord: null,
       lastLetter: null,
+      lastTwoLetters: null,
       usedWords: [],
-      timeLeft: settings.turnTime,
-      turnTime: settings.turnTime,
+      timeLeft: turnTime,
+      turnTime,
       timerId: null,
       messages: [],
       gameOver: false,
-      winner: null
+      winner: null,
+      lives,
+      maxLives,
+      passesLeft,
+      maxPasses,
+      category,
+      categoryLabel: CATEGORY_LABELS[category] || 'Serbest',
+      matchMode,
+      useDictionary,
+      skipNotice: null
     };
-    // Puanları sıfırla
-    room.players.forEach(p => { p.score = 0; p.eliminated = false; });
     this.startTurn(room);
     broadcastRoom(room.code);
   },
@@ -208,97 +277,191 @@ const KelimeZinciri = {
       io.to(room.code).emit('kelime:timer', { timeLeft: state.timeLeft });
       if (state.timeLeft <= 0) {
         clearInterval(state.timerId);
-        this.eliminatePlayer(room, 'Süre doldu!');
+        this.loseLife(room, 'Süre doldu!');
       }
     }, 1000);
   },
 
-  // ğ ile biten kelime için kullanılabilir bir harf bul
-  // (Türkçe'de ğ ile başlayan kelime yok)
-  getNextLetter(word) {
+  // Aktif kelime havuzunu döndür (kategori / sözlük / yok)
+  getWordSource(state) {
+    if (state.category === 'a-yok') return DICTIONARY;
+    if (state.category && state.category !== 'serbest') return CATEGORIES[state.category] || null;
+    if (state.useDictionary) return DICTIONARY;
+    return null;
+  },
+
+  // ğ -> önceki sesli harf mantığı (son-harf modu için)
+  resolveLastLetter(word) {
     let last = word[word.length - 1];
     if (last !== 'ğ') return last;
-    // ğ ise: bir önceki sesli harfi ara
     const vowels = ['a','e','ı','i','o','ö','u','ü'];
     for (let i = word.length - 2; i >= 0; i--) {
       if (vowels.includes(word[i])) return word[i];
     }
-    return 'a'; // fallback
+    return 'a';
   },
 
-  submitWord(room, playerId, word) {
-    const state = room.gameState;
-    if (!state || state.gameOver) return;
+  // Kelimeden sonraki "gereken başlangıç" değerlerini hesapla
+  computeNextRequirement(word, matchMode) {
+    if (matchMode === 'kafiye' && word.length >= 2) {
+      const last = word[word.length - 1];
+      // Son harf ğ ise: kafiye yerine son-harf modunu uygula (geçici)
+      if (last === 'ğ') {
+        const ll = this.resolveLastLetter(word);
+        return { lastLetter: ll, lastTwoLetters: null };
+      }
+      const lastTwo = word.slice(-2);
+      return { lastLetter: lastTwo[0], lastTwoLetters: lastTwo };
+    }
+    return { lastLetter: this.resolveLastLetter(word), lastTwoLetters: null };
+  },
 
-    const currentPlayer = room.players[state.currentPlayerIndex];
-    if (!currentPlayer || currentPlayer.id !== playerId) return;
-
-    word = word.trim().toLocaleLowerCase('tr-TR');
-    
-    const settings = room.settings?.kelime || {};
+  // Kelime doğrulama
+  validateWord(rawWord, state, settings) {
+    const word = (rawWord || '').trim().toLocaleLowerCase('tr-TR');
     const minLength = settings.minLength || 2;
-    
+
     if (word.length < minLength) {
-      io.to(playerId).emit('kelime:error', { message: `Kelime en az ${minLength} harf olmalı!` });
-      return;
+      return { ok: false, error: `Kelime en az ${minLength} harf olmalı!` };
+    }
+    if (!/^[a-zçğıöşüâîû]+$/i.test(word)) {
+      return { ok: false, error: 'Sadece Türkçe harfler!' };
     }
 
-    // Sadece Türkçe harf/boşluk kontrolü
-    if (!/^[a-zçğıöşüâîû ]+$/i.test(word)) {
-      io.to(playerId).emit('kelime:error', { message: 'Sadece Türkçe harfler kullan!' });
-      return;
-    }
-
-    // İlk kelime değilse, doğru harfle başlamalı
-    if (state.lastLetter && word[0] !== state.lastLetter) {
-      io.to(playerId).emit('kelime:error', { 
-        message: `Kelime "${state.lastLetter.toUpperCase()}" harfi ile başlamalı!` 
-      });
-      return;
+    // Başlangıç eşleşmesi
+    if (state.matchMode === 'kafiye' && state.lastTwoLetters) {
+      if (!word.startsWith(state.lastTwoLetters)) {
+        return { ok: false, error: `Kelime "${state.lastTwoLetters.toUpperCase()}" ile başlamalı! (kafiye modu)` };
+      }
+    } else if (state.lastLetter) {
+      if (word[0] !== state.lastLetter) {
+        return { ok: false, error: `Kelime "${state.lastLetter.toUpperCase()}" harfi ile başlamalı!` };
+      }
     }
 
     if (state.usedWords.includes(word)) {
-      io.to(playerId).emit('kelime:error', { message: 'Bu kelime zaten kullanıldı!' });
+      return { ok: false, error: 'Bu kelime zaten kullanıldı!' };
+    }
+
+    // Kategori / sözlük kontrolü
+    if (state.category === 'a-yok') {
+      if (word.includes('a')) {
+        return { ok: false, error: 'Kelimede "a" harfi olamaz!' };
+      }
+      if (DICTIONARY.size > 0 && !DICTIONARY.has(word)) {
+        return { ok: false, error: 'Sözlükte böyle bir kelime yok!' };
+      }
+    } else if (state.category && state.category !== 'serbest') {
+      const list = CATEGORIES[state.category];
+      const label = CATEGORY_LABELS[state.category] || state.category;
+      if (!list || list.size === 0) {
+        return { ok: false, error: `"${label}" kategorisi yüklenemedi!` };
+      }
+      if (!list.has(word)) {
+        return { ok: false, error: `Bu kelime "${label}" kategorisinde değil!` };
+      }
+    } else if (state.useDictionary) {
+      if (DICTIONARY.size > 0 && !DICTIONARY.has(word)) {
+        return { ok: false, error: 'Sözlükte böyle bir kelime yok!' };
+      }
+    }
+
+    return { ok: true, word };
+  },
+
+  submitWord(room, playerId, rawWord) {
+    const state = room.gameState;
+    if (!state || state.gameOver) return;
+    const currentPlayer = room.players[state.currentPlayerIndex];
+    if (!currentPlayer || currentPlayer.id !== playerId) return;
+
+    const settings = room.settings?.kelime || {};
+    const result = this.validateWord(rawWord, state, settings);
+    if (!result.ok) {
+      io.to(playerId).emit('kelime:error', { message: result.error });
       return;
     }
 
-    // Geçerli kelime
+    const word = result.word;
     state.usedWords.push(word);
     state.lastWord = word;
-    state.lastLetter = this.getNextLetter(word); // ğ ise sesli harfe atla
-    
-    // ğ ile bittiyse mesajda belirt
+    const next = this.computeNextRequirement(word, state.matchMode);
+    state.lastLetter = next.lastLetter;
+    state.lastTwoLetters = next.lastTwoLetters;
+    state.skipNotice = null;
+
     const trueEnding = word[word.length - 1];
     let displayWord = word;
     if (trueEnding === 'ğ') {
-      displayWord = `${word} → sıradaki harf: ${state.lastLetter.toUpperCase()}`;
+      displayWord = `${word} → sıradaki: ${state.lastLetter.toUpperCase()}`;
     }
-    
-    currentPlayer.score += word.length; // Uzun kelime daha çok puan
-    state.messages.push({ player: currentPlayer.name, word: displayWord, valid: true });
 
-    // Mesaj geçmişini kısa tut
+    currentPlayer.score += word.length;
+    state.messages.push({ player: currentPlayer.name, word: displayWord, valid: true });
     if (state.messages.length > 15) state.messages.shift();
 
-    // Sonraki oyuncu
     this.nextTurn(room);
     broadcastRoom(room.code);
   },
 
-  eliminatePlayer(room, reason) {
+  pass(room, playerId) {
+    const state = room.gameState;
+    if (!state || state.gameOver) return;
+    const currentPlayer = room.players[state.currentPlayerIndex];
+    if (!currentPlayer || currentPlayer.id !== playerId) return;
+
+    if ((state.passesLeft[playerId] || 0) <= 0) {
+      io.to(playerId).emit('kelime:error', { message: 'Pas hakkın kalmadı!' });
+      return;
+    }
+
+    state.passesLeft[playerId]--;
+    state.messages.push({
+      player: currentPlayer.name,
+      word: 'Pas geçti',
+      valid: false,
+      pass: true
+    });
+    if (state.messages.length > 15) state.messages.shift();
+
+    io.to(room.code).emit('kelime:passUsed', {
+      playerId,
+      playerName: currentPlayer.name,
+      passesLeft: state.passesLeft[playerId]
+    });
+
+    this.nextTurn(room);
+    broadcastRoom(room.code);
+  },
+
+  loseLife(room, reason) {
     const state = room.gameState;
     const currentPlayer = room.players[state.currentPlayerIndex];
     if (!currentPlayer) return;
 
-    state.messages.push({ 
-      player: currentPlayer.name, 
-      word: reason, 
-      valid: false 
+    state.lives[currentPlayer.id] = Math.max(0, (state.lives[currentPlayer.id] || 1) - 1);
+
+    state.messages.push({
+      player: currentPlayer.name,
+      word: reason,
+      valid: false
     });
 
-    // Oyuncuyu elemiş gibi işaretle (basit versiyon: tur atla, son kalan kazanır)
-    // Burada basit tutuyoruz: süre dolduğunda sonraki oyuncuya geçer ve elenir
-    currentPlayer.eliminated = true;
+    io.to(room.code).emit('kelime:lifeLost', {
+      playerId: currentPlayer.id,
+      playerName: currentPlayer.name,
+      livesLeft: state.lives[currentPlayer.id]
+    });
+
+    if (state.lives[currentPlayer.id] <= 0) {
+      currentPlayer.eliminated = true;
+      state.messages.push({
+        player: currentPlayer.name,
+        word: 'Elendi!',
+        valid: false
+      });
+    }
+    if (state.messages.length > 15) state.messages.shift();
 
     const activePlayers = room.players.filter(p => !p.eliminated);
     if (activePlayers.length <= 1) {
@@ -313,16 +476,112 @@ const KelimeZinciri = {
     broadcastRoom(room.code);
   },
 
+  // Şu anki gereken başlangıç için en az 1 oynanabilir kelime var mı?
+  isDeadEnd(state) {
+    const source = this.getWordSource(state);
+    if (!source) return false; // Hiç kaynak yoksa çıkmaz tespiti yapılmaz
+    const usedSet = new Set(state.usedWords);
+
+    // Kafiye modu: 2 harfli prefix
+    if (state.matchMode === 'kafiye' && state.lastTwoLetters) {
+      const prefix = state.lastTwoLetters;
+      for (const w of source) {
+        if (w.length >= 2 && w.startsWith(prefix) && !usedSet.has(w)) {
+          if (state.category === 'a-yok' && w.includes('a')) continue;
+          return false;
+        }
+      }
+      return true;
+    }
+
+    if (!state.lastLetter) return false;
+    const firstLetter = state.lastLetter;
+
+    if (state.category === 'a-yok') {
+      if (firstLetter === 'a') return true;
+      for (const w of source) {
+        if (w[0] === firstLetter && !w.includes('a') && !usedSet.has(w)) return false;
+      }
+      return true;
+    }
+
+    if (source === DICTIONARY) {
+      const bucket = DICT_BY_FIRST_LETTER[firstLetter];
+      if (!bucket) return true;
+      for (const w of bucket) {
+        if (!usedSet.has(w)) return false;
+      }
+      return true;
+    }
+
+    for (const w of source) {
+      if (w[0] === firstLetter && !usedSet.has(w)) return false;
+    }
+    return true;
+  },
+
+  // Çıkmazda atlanacak alternatif harfi bul (önce sesli)
+  findAlternativeLetter(state) {
+    const source = this.getWordSource(state);
+    if (!source) return null;
+    const usedSet = new Set(state.usedWords);
+
+    const tryLetter = (ch) => {
+      if (state.category === 'a-yok' && ch === 'a') return false;
+      if (source === DICTIONARY) {
+        const bucket = DICT_BY_FIRST_LETTER[ch];
+        if (!bucket) return false;
+        for (const w of bucket) {
+          if (state.category === 'a-yok' && w.includes('a')) continue;
+          if (!usedSet.has(w)) return true;
+        }
+        return false;
+      }
+      for (const w of source) {
+        if (w[0] !== ch) continue;
+        if (state.category === 'a-yok' && w.includes('a')) continue;
+        if (!usedSet.has(w)) return true;
+      }
+      return false;
+    };
+
+    const vowels = ['a','e','i','o','u','ı','ö','ü'];
+    for (const v of vowels) if (tryLetter(v)) return v;
+    for (let c = 97; c <= 122; c++) {
+      const ch = String.fromCharCode(c);
+      if (tryLetter(ch)) return ch;
+    }
+    return null;
+  },
+
   nextTurn(room) {
     const state = room.gameState;
     if (state.timerId) clearInterval(state.timerId);
 
-    // Sonraki aktif oyuncuyu bul
     let attempts = 0;
     do {
       state.currentPlayerIndex = (state.currentPlayerIndex + 1) % room.players.length;
       attempts++;
     } while (room.players[state.currentPlayerIndex].eliminated && attempts < room.players.length);
+
+    // Çıkmaz harf tespiti — sonraki oyuncuya gerçekten oynanabilir bir prefix bırak
+    state.skipNotice = null;
+    if (state.lastLetter && this.isDeadEnd(state)) {
+      const alt = this.findAlternativeLetter(state);
+      if (alt && alt !== state.lastLetter) {
+        const fromDisplay = (state.matchMode === 'kafiye' && state.lastTwoLetters)
+          ? state.lastTwoLetters.toUpperCase()
+          : state.lastLetter.toUpperCase();
+        state.skipNotice = {
+          from: fromDisplay,
+          to: alt.toUpperCase(),
+          message: `"${fromDisplay}" ile kelime kalmadı → "${alt.toUpperCase()}" harfine atlandı`
+        };
+        state.lastLetter = alt;
+        state.lastTwoLetters = null; // Kafiye modu çıkmazda tek harfe düşer
+        io.to(room.code).emit('kelime:skipped', state.skipNotice);
+      }
+    }
 
     this.startTurn(room);
   },
@@ -1649,8 +1908,13 @@ const UnoOyun = {
 // ============================================================
 const DEFAULT_SETTINGS = {
   kelime: {
-    turnTime: 20,      // saniye
-    minLength: 2       // minimum kelime uzunluğu
+    turnTime: 20,            // saniye
+    minLength: 2,            // minimum kelime uzunluğu
+    lives: 1,                // oyuncu başına can (1-5)
+    passesPerPlayer: 1,      // oyuncu başına pas hakkı (0-3)
+    category: 'serbest',     // 'serbest'|'hayvan'|'bitki'|'esya'|'ulke'|'yemek'|'a-yok'
+    matchMode: 'son-harf',   // 'son-harf'|'kafiye'
+    useDictionary: true      // sözlük kontrolü (serbest modda)
   },
   hafiza: {
     pairCount: 8       // 8 çift = 16 kart (6/8/10/12 olabilir)
@@ -1754,23 +2018,31 @@ io.on('connection', (socket) => {
     
     // Sadece bilinen alanları güncelle ve sınırlar dahilinde
     const limits = {
-      kelime: { turnTime: [5, 60], minLength: [2, 6] },
+      kelime: {
+        turnTime: [5, 60],
+        minLength: [2, 6],
+        lives: [1, 5],
+        passesPerPlayer: [0, 3],
+        category: { values: ['serbest', 'hayvan', 'bitki', 'esya', 'ulke', 'yemek', 'a-yok'] },
+        matchMode: { values: ['son-harf', 'kafiye'] },
+        useDictionary: 'bool'
+      },
       hafiza: { pairCount: [4, 18] },
       cizim: { roundTime: [30, 180], totalRounds: [1, 5] },
       trivia: { questionTime: [5, 30], totalQuestions: [5, 30] },
-      vampir: { 
-        discussionTime: [20, 180], 
-        voteTime: [10, 60], 
+      vampir: {
+        discussionTime: [20, 180],
+        voteTime: [10, 60],
         nightTime: [10, 60],
         extraVampire: 'bool'
       },
       yilan: { duration: [30, 300], foodCount: [10, 60], speed: [2, 5] },
       uno: { initialHand: [5, 10] }
     };
-    
+
     const gameLimits = limits[gameType];
     if (!gameLimits) return;
-    
+
     for (const key in settings) {
       const lim = gameLimits[key];
       if (!lim) continue;
@@ -1779,6 +2051,8 @@ io.on('connection', (socket) => {
         room.settings[gameType][key] = !!v;
       } else if (Array.isArray(lim) && typeof v === 'number') {
         room.settings[gameType][key] = Math.max(lim[0], Math.min(lim[1], Math.round(v)));
+      } else if (typeof lim === 'object' && Array.isArray(lim.values) && typeof v === 'string') {
+        if (lim.values.includes(v)) room.settings[gameType][key] = v;
       }
     }
     broadcastRoom(room.code);
@@ -1847,6 +2121,15 @@ io.on('connection', (socket) => {
     const { room } = result;
     if (room.game !== 'kelime-zinciri') return;
     KelimeZinciri.submitWord(room, socket.id, word);
+  });
+
+  // --- Kelime Zinciri: Pas geç ---
+  socket.on('kelime:pass', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room } = result;
+    if (room.game !== 'kelime-zinciri') return;
+    KelimeZinciri.pass(room, socket.id);
   });
 
   // --- Hafıza: Kart çevir ---
