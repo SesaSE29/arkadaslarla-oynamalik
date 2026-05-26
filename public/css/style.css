@@ -650,9 +650,32 @@ input[type="text"]:focus {
   display: flex;
   gap: 12px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
+  align-items: stretch;
 }
 
-.kelime-input-area input { flex: 1; }
+.kelime-input-area input {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-size: 16px; /* iOS Safari'nin otomatik zoom yapmaması için */
+}
+
+.kelime-input-area .btn-primary,
+.kelime-input-area .btn-pass {
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+
+@media (min-width: 600px) {
+  .kelime-input-area input {
+    flex: 1 1 auto;
+    font-size: 1.1rem;
+  }
+  .kelime-input-area .btn-primary,
+  .kelime-input-area .btn-pass {
+    flex: 0 0 auto;
+  }
+}
 
 .kelime-input-area.locked {
   opacity: 0.5;
@@ -2384,6 +2407,34 @@ input[type="text"]:focus {
   border-radius: var(--radius-sm);
   font-size: 0.9rem;
   color: #6b5300;
+}
+
+.settings-empty {
+  text-align: center;
+  padding: 32px 24px;
+  color: var(--color-text-light, #6b7280);
+  font-style: italic;
+}
+
+.settings-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  padding: 16px 24px 24px;
+  border-top: 2px solid var(--color-surface-soft, #f3f0fc);
+  background: var(--color-surface, white);
+  position: sticky;
+  bottom: 0;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.settings-footer .btn {
+  min-width: 120px;
+}
+
+@media (max-width: 500px) {
+  .settings-footer { flex-direction: column-reverse; }
+  .settings-footer .btn { min-width: 0; width: 100%; }
 }
 
 /* ============================================================

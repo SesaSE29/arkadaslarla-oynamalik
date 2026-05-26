@@ -97,16 +97,72 @@ document.getElementById('btn-copy-code').addEventListener('click', () => {
 // ============================================================
 const settingsModal = document.getElementById('settings-modal');
 let isSettingsBuilding = false; // sunucudan gelirken event tetiklenmesini engelle
+let pendingGameType = null;     // ayarlar modal'ı bir oyun için açıldıysa hangisi
 
-document.getElementById('btn-settings').addEventListener('click', () => {
+// Oyun bilgileri — kart tipinden ayar paneline / başlık bilgisine map
+const GAME_INFO = {
+  'kelime-zinciri': { tab: 'kelime', icon: '🔤', name: 'Kelime Zinciri' },
+  'hafiza':         { tab: 'hafiza', icon: '🧠', name: 'Hafıza Oyunu' },
+  'cizim':          { tab: 'cizim',  icon: '🎨', name: 'Çizim-Tahmin' },
+  'trivia':         { tab: 'trivia', icon: '🎯', name: 'Trivia' },
+  'vampir':         { tab: 'vampir', icon: '🧛', name: 'Vampir Köylü' },
+  'yilan':          { tab: 'yilan',  icon: '🐍', name: 'Yılan Savaşı' },
+  'amiral':         { tab: null,     icon: '⚓', name: 'Amiral Battı' }, // ayar yok
+  'uno':            { tab: 'uno',    icon: '🃏', name: 'Uno Benzeri' }
+};
+
+function closeSettings() {
+  settingsModal.style.display = 'none';
+  pendingGameType = null;
+}
+
+function openSettingsForGame(gameType) {
+  const info = GAME_INFO[gameType];
+  if (!info) return;
+  pendingGameType = gameType;
+
+  // Başlık
+  document.getElementById('settings-title').textContent = `${info.icon} ${info.name} — Ayarlar`;
+
+  // Tab bar gizli (tek oyuna odakla)
+  document.getElementById('settings-tabs').style.display = 'none';
+
+  // Doğru paneli aktif et
+  document.querySelectorAll('.settings-pane').forEach(p => p.classList.remove('active'));
+  const emptyEl = document.getElementById('settings-empty');
+  if (info.tab) {
+    const pane = document.querySelector(`.settings-pane[data-pane="${info.tab}"]`);
+    if (pane) pane.classList.add('active');
+    if (emptyEl) emptyEl.style.display = 'none';
+    document.getElementById('settings-hint').textContent = 'Ayarları düzenle, sonra "Başlat"a bas.';
+  } else {
+    if (emptyEl) emptyEl.style.display = 'block';
+    document.getElementById('settings-hint').textContent = 'Hazırsan başlat!';
+  }
+
   settingsModal.style.display = 'flex';
   applySettingsToUI();
+}
+
+document.getElementById('settings-close').addEventListener('click', closeSettings);
+document.getElementById('settings-cancel').addEventListener('click', closeSettings);
+
+document.getElementById('settings-start').addEventListener('click', () => {
+  if (!pendingGameType) return;
+  if (state.you?.id !== state.host) {
+    showToast('Sadece oda kurucusu oyun başlatabilir!', 'error');
+    return;
+  }
+  if (state.players.length < 2) {
+    showToast('En az 2 oyuncu lazım!', 'error');
+    return;
+  }
+  socket.emit('game:start', { gameType: pendingGameType });
+  closeSettings();
 });
-document.getElementById('settings-close').addEventListener('click', () => {
-  settingsModal.style.display = 'none';
-});
+
 settingsModal.addEventListener('click', (e) => {
-  if (e.target === settingsModal) settingsModal.style.display = 'none';
+  if (e.target === settingsModal) closeSettings();
 });
 
 // Tab değiştirme
@@ -190,12 +246,12 @@ function applySettingsToUI() {
   isSettingsBuilding = false;
 }
 
-// Oyun seçme kartları
+// Oyun seçme kartları — ayarlar modal'ını aç (oyunu hemen başlatma)
 document.querySelectorAll('.game-card:not(.disabled)').forEach(card => {
   card.addEventListener('click', () => {
     const gameType = card.dataset.game;
     if (!gameType) return;
-    if (state.you.id !== state.host) {
+    if (state.you?.id !== state.host) {
       showToast('Sadece oda kurucusu oyun başlatabilir!', 'error');
       return;
     }
@@ -203,7 +259,7 @@ document.querySelectorAll('.game-card:not(.disabled)').forEach(card => {
       showToast('En az 2 oyuncu lazım!', 'error');
       return;
     }
-    socket.emit('game:start', { gameType });
+    openSettingsForGame(gameType);
   });
 });
 
@@ -255,6 +311,13 @@ document.getElementById('kelime-exit').addEventListener('click', exitGame);
 document.getElementById('kelime-back-lobby').addEventListener('click', exitGame);
 document.getElementById('kelime-pass').addEventListener('click', () => {
   socket.emit('kelime:pass');
+});
+
+// Mobil: input fokuslandığında ekrana kaydır (klavye altında kalmasın)
+document.getElementById('kelime-input').addEventListener('focus', () => {
+  setTimeout(() => {
+    document.getElementById('kelime-input-area')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 200);
 });
 
 function submitKelime() {

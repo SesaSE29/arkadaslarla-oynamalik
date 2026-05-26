@@ -70,7 +70,6 @@
           <button class="btn-copy" id="btn-copy-code" title="Kopyala">📋</button>
         </div>
         <div class="lobby-header-actions">
-          <button class="btn btn-secondary btn-sm" id="btn-settings">⚙️ Ayarlar</button>
           <button class="btn btn-ghost" id="btn-leave">Ayrıl</button>
         </div>
       </div>
@@ -544,12 +543,12 @@
   <div id="settings-modal" class="settings-modal" style="display:none">
     <div class="settings-content">
       <div class="settings-header">
-        <h2>⚙️ Oyun Ayarları</h2>
+        <h2 id="settings-title">⚙️ Oyun Ayarları</h2>
         <button class="settings-close" id="settings-close">✕</button>
       </div>
-      <p class="settings-hint" id="settings-hint">Bir oyun seç, ayarlarını değiştir. Değişiklikler otomatik kaydedilir.</p>
-      
-      <div class="settings-tabs">
+      <p class="settings-hint" id="settings-hint">Ayarları düzenle, sonra "Başlat"a bas.</p>
+
+      <div class="settings-tabs" id="settings-tabs" style="display:none">
         <button class="settings-tab active" data-tab="kelime">🔤 Kelime</button>
         <button class="settings-tab" data-tab="hafiza">🧠 Hafıza</button>
         <button class="settings-tab" data-tab="cizim">🎨 Çizim</button>
@@ -692,6 +691,15 @@
       <p class="settings-host-warning" id="settings-host-warning" style="display:none">
         ⚠️ Sadece oda kurucusu (host) ayarları değiştirebilir.
       </p>
+
+      <div class="settings-empty" id="settings-empty" style="display:none">
+        <p>Bu oyunun ayarı yok. Klasik kurallarla oynanır.</p>
+      </div>
+
+      <div class="settings-footer">
+        <button class="btn btn-ghost" id="settings-cancel">İptal</button>
+        <button class="btn btn-primary" id="settings-start">▶ Oyunu Başlat</button>
+      </div>
     </div>
   </div>
 
