@@ -1249,20 +1249,47 @@ const Vampir = {
     }
 
     const settings = room.settings?.vampir || {
-      discussionTime: 60, voteTime: 20, nightTime: 25, extraVampire: false
+      discussionTime: 60, voteTime: 20, nightTime: 25,
+      extraVampire: false, doctorCount: 1, detectiveCount: 1,
+      witch: false, jester: false
     };
 
-    // Rol dağıtımı: 4-5 kişide normal 1 vampir (extraVampire açıksa 2), 6+ kişide 2 vampir
+    // Rol dağıtımı
     const n = room.players.length;
-    let vampireCount = n <= 5 ? (settings.extraVampire ? 2 : 1) : 2;
-    if (vampireCount >= n - 2) vampireCount = Math.max(1, n - 3); // doktor+dedektif+1 köylü garanti
-    
+    let vampireCount;
+    if (n <= 5) vampireCount = settings.extraVampire ? 2 : 1;
+    else if (n <= 8) vampireCount = 2;
+    else vampireCount = 3; // 9-12 kişi: 3 vampir
+    const doctorCount = Math.max(0, Math.min(2, settings.doctorCount ?? 1));
+    const detectiveCount = Math.max(0, Math.min(2, settings.detectiveCount ?? 1));
+    const witchCount = settings.witch ? 1 : 0;
+    const jesterCount = settings.jester ? 1 : 0;
+
+    // Toplam özel rol + vampir < n olsun, kalanı köylü
+    let specialTotal = vampireCount + doctorCount + detectiveCount + witchCount + jesterCount;
+    if (specialTotal >= n) {
+      // Vampir hariç önceliğe göre azalt
+      const reduceOrder = ['jesterCount', 'witchCount', 'detectiveCount', 'doctorCount'];
+      const counts = { jesterCount, witchCount, detectiveCount, doctorCount };
+      let i = 0;
+      while (specialTotal >= n && i < reduceOrder.length) {
+        if (counts[reduceOrder[i]] > 0) {
+          counts[reduceOrder[i]]--;
+          specialTotal--;
+        } else {
+          i++;
+        }
+      }
+    }
+
     const roles = [];
     for (let i = 0; i < vampireCount; i++) roles.push('vampir');
-    roles.push('doktor');
-    roles.push('dedektif');
+    for (let i = 0; i < doctorCount; i++) roles.push('doktor');
+    for (let i = 0; i < detectiveCount; i++) roles.push('dedektif');
+    for (let i = 0; i < witchCount; i++) roles.push('cadi');
+    for (let i = 0; i < jesterCount; i++) roles.push('soytari');
     while (roles.length < n) roles.push('koylu');
-    
+
     // Karıştır
     roles.sort(() => Math.random() - 0.5);
 
@@ -1286,6 +1313,12 @@ const Vampir = {
       });
     });
 
+    // Cadı için iksir durumunu hazırla (oyun boyu, oyuncu başına)
+    const witchPotions = {};
+    room.players.forEach(p => {
+      if (p.role === 'cadi') witchPotions[p.id] = { protect: 1, kill: 1 };
+    });
+
     room.gameState = {
       type: 'vampir',
       phase: 'night',
@@ -1297,14 +1330,20 @@ const Vampir = {
       timerId: null,
       nightActions: {
         vampireTargets: {},
-        doctorTarget: null,
-        detectiveTarget: null
+        doctorTargets: {},      // { doctorId: targetId } - çoklu doktor desteği
+        detectiveTargets: {},   // { detectiveId: targetId }
+        witchProtect: null,     // (cadı koruma hedefi)
+        witchKill: null         // (cadı öldürme hedefi)
       },
       votes: {},
       events: [],
       chat: [],
+      witchPotions,
+      hasWitch: witchCount > 0,
+      hasJester: jesterCount > 0,
       gameOver: false,
-      winner: null
+      winner: null,
+      jesterWon: false        // Soytarı oylanırsa true
     };
 
     this.startPhase(room, 'night');
@@ -1318,7 +1357,13 @@ const Vampir = {
 
     if (phase === 'night') {
       state.timeLeft = state.nightTime;
-      state.nightActions = { vampireTargets: {}, doctorTarget: null, detectiveTarget: null };
+      state.nightActions = {
+        vampireTargets: {},
+        doctorTargets: {},
+        detectiveTargets: {},
+        witchProtect: null,
+        witchKill: null
+      };
     } else if (phase === 'dayDiscussion') {
       state.timeLeft = state.discussionTime;
       state.chat = [];
@@ -1353,7 +1398,7 @@ const Vampir = {
 
   resolveNight(room) {
     const state = room.gameState;
-    
+
     // Vampirlerin oyladığı hedef (en çok oy alan)
     const voteCounts = {};
     Object.values(state.nightActions.vampireTargets).forEach(targetId => {
@@ -1368,22 +1413,35 @@ const Vampir = {
       }
     }
 
-    const doctorSave = state.nightActions.doctorTarget;
-    let killed = null;
+    // Doktorların koruduğu hedefler (set)
+    const protectedIds = new Set(Object.values(state.nightActions.doctorTargets || {}));
+    if (state.nightActions.witchProtect) protectedIds.add(state.nightActions.witchProtect);
 
-    if (killTarget && killTarget !== doctorSave) {
+    const killedNames = [];
+
+    // Vampir saldırısı
+    if (killTarget && !protectedIds.has(killTarget)) {
       const victim = room.players.find(p => p.id === killTarget);
       if (victim && victim.alive) {
         victim.alive = false;
-        killed = victim.name;
+        killedNames.push(victim.name);
       }
     }
 
-    // Dedektif sonucu - sadece dedektife gönder
-    if (state.nightActions.detectiveTarget) {
-      const target = room.players.find(p => p.id === state.nightActions.detectiveTarget);
-      const detective = room.players.find(p => p.role === 'dedektif' && p.alive);
-      if (target && detective) {
+    // Cadı öldürme iksiri
+    if (state.nightActions.witchKill && state.nightActions.witchKill !== state.nightActions.witchProtect) {
+      const witchVictim = room.players.find(p => p.id === state.nightActions.witchKill);
+      if (witchVictim && witchVictim.alive) {
+        witchVictim.alive = false;
+        killedNames.push(witchVictim.name + ' (cadı iksiriyle)');
+      }
+    }
+
+    // Dedektif sonuçları - her dedektife kendi hedefinin sonucu
+    for (const [detId, targetId] of Object.entries(state.nightActions.detectiveTargets || {})) {
+      const detective = room.players.find(p => p.id === detId);
+      const target = room.players.find(p => p.id === targetId);
+      if (detective && detective.alive && target) {
         io.to(detective.id).emit('vampir:detectiveResult', {
           targetName: target.name,
           isVampire: target.role === 'vampir'
@@ -1392,11 +1450,15 @@ const Vampir = {
     }
 
     // Gece olayı kaydet
-    state.events.push({
-      day: state.dayNumber,
-      type: 'night',
-      message: killed ? `🌙 Gece: ${killed} bir vampir saldırısında öldü!` : '🌙 Gece: Doktor kurbanı kurtardı, kimse ölmedi.'
-    });
+    let msg;
+    if (killedNames.length === 0) {
+      msg = '🌙 Gece: Kimse ölmedi (koruma veya saldırı yok).';
+    } else if (killedNames.length === 1) {
+      msg = `🌙 Gece: ${killedNames[0]} öldü!`;
+    } else {
+      msg = `🌙 Gece: ${killedNames.join(', ')} öldü!`;
+    }
+    state.events.push({ day: state.dayNumber, type: 'night', message: msg });
 
     // Oyun bitti mi?
     if (this.checkGameOver(room)) return;
@@ -1439,6 +1501,23 @@ const Vampir = {
           type: 'day',
           message: `☀️ Oylama: ${player.name} köyden kovuldu! (Rolü: ${this.roleEmoji(player.role)} ${this.roleName(player.role)})`
         });
+
+        // Soytarı kazanma kontrolü
+        if (player.role === 'soytari') {
+          state.jesterWon = true;
+          state.gameOver = true;
+          state.phase = 'gameOver';
+          state.winner = 'soytari';
+          player.score += 3; // soytarı kazandığı için bonus
+          state.events.push({
+            day: state.dayNumber,
+            type: 'day',
+            message: `🤡 ${player.name} SOYTARIYDI! Köy onu idam etti, kazandı!`
+          });
+          if (state.timerId) clearInterval(state.timerId);
+          broadcastRoom(room.code);
+          return;
+        }
       }
     } else {
       state.events.push({
@@ -1458,22 +1537,21 @@ const Vampir = {
   checkGameOver(room) {
     const state = room.gameState;
     const aliveVampires = room.players.filter(p => p.alive && p.role === 'vampir').length;
-    const aliveOthers = room.players.filter(p => p.alive && p.role !== 'vampir').length;
+    // Soytarı bağımsız ama yaşayan sayımına dahil değil (köyle savaşmıyor)
+    const aliveTownish = room.players.filter(p => p.alive && p.role !== 'vampir' && p.role !== 'soytari').length;
 
     if (aliveVampires === 0) {
-      // Köylüler kazandı
       state.gameOver = true;
       state.phase = 'gameOver';
       state.winner = 'koyluler';
       room.players.forEach(p => {
-        if (p.role !== 'vampir') p.score += 1;
+        if (p.role !== 'vampir' && p.role !== 'soytari') p.score += 1;
       });
       if (state.timerId) clearInterval(state.timerId);
       broadcastRoom(room.code);
       return true;
     }
-    if (aliveVampires >= aliveOthers) {
-      // Vampirler kazandı
+    if (aliveVampires >= aliveTownish) {
       state.gameOver = true;
       state.phase = 'gameOver';
       state.winner = 'vampirler';
@@ -1519,10 +1597,10 @@ const Vampir = {
     if (!player || !player.alive || player.role !== 'doktor') return;
     const target = room.players.find(p => p.id === targetId);
     if (!target || !target.alive) return;
-    
-    state.nightActions.doctorTarget = targetId;
-    io.to(playerId).emit('vampir:actionConfirm', { 
-      message: `${target.name} bu gece korumaya alındı.` 
+
+    state.nightActions.doctorTargets[playerId] = targetId;
+    io.to(playerId).emit('vampir:actionConfirm', {
+      message: `${target.name} bu gece korumaya alındı.`
     });
   },
 
@@ -1533,11 +1611,40 @@ const Vampir = {
     if (!player || !player.alive || player.role !== 'dedektif') return;
     const target = room.players.find(p => p.id === targetId);
     if (!target || !target.alive || target.id === playerId) return;
-    
-    state.nightActions.detectiveTarget = targetId;
-    io.to(playerId).emit('vampir:actionConfirm', { 
-      message: `${target.name} araştırılıyor...` 
+
+    state.nightActions.detectiveTargets[playerId] = targetId;
+    io.to(playerId).emit('vampir:actionConfirm', {
+      message: `${target.name} araştırılıyor...`
     });
+  },
+
+  witchPotion(room, playerId, type, targetId) {
+    // type: 'protect' veya 'kill'
+    const state = room.gameState;
+    if (!state || state.phase !== 'night') return;
+    const player = room.players.find(p => p.id === playerId);
+    if (!player || !player.alive || player.role !== 'cadi') return;
+    const potions = state.witchPotions?.[playerId];
+    if (!potions || (potions[type] || 0) <= 0) {
+      io.to(playerId).emit('vampir:actionConfirm', { message: 'Bu iksir bitti!' });
+      return;
+    }
+    const target = room.players.find(p => p.id === targetId);
+    if (!target || !target.alive) return;
+
+    if (type === 'protect') {
+      state.nightActions.witchProtect = targetId;
+      potions.protect--;
+      io.to(playerId).emit('vampir:actionConfirm', {
+        message: `${target.name} koruma iksiriyle kurtarıldı. (${potions.protect} koruma kaldı)`
+      });
+    } else if (type === 'kill') {
+      state.nightActions.witchKill = targetId;
+      potions.kill--;
+      io.to(playerId).emit('vampir:actionConfirm', {
+        message: `${target.name} öldürme iksiri kurbanı. (${potions.kill} öldürme kaldı)`
+      });
+    }
   },
 
   dayVote(room, playerId, targetId) {
@@ -1566,10 +1673,10 @@ const Vampir = {
   },
 
   roleEmoji(role) {
-    return { vampir: '🧛', doktor: '⚕️', dedektif: '🔍', koylu: '👨‍🌾' }[role] || '?';
+    return { vampir: '🧛', doktor: '⚕️', dedektif: '🔍', cadi: '🧙', soytari: '🤡', koylu: '👨‍🌾' }[role] || '?';
   },
   roleName(role) {
-    return { vampir: 'Vampir', doktor: 'Doktor', dedektif: 'Dedektif', koylu: 'Köylü' }[role] || '?';
+    return { vampir: 'Vampir', doktor: 'Doktor', dedektif: 'Dedektif', cadi: 'Cadı', soytari: 'Soytarı', koylu: 'Köylü' }[role] || '?';
   },
 
   stop(room) {
@@ -1582,78 +1689,111 @@ const Vampir = {
 // ============================================================
 // YILAN SAVAŞI (Slither.io basit klonu)
 // ============================================================
+// ============================================================
+// YILAN v2 — büyük arena, boost, çoklu yem türü, ölüm yemi, temiz collision
+// ============================================================
 const Yilan = {
-  TICK_RATE: 100,       // ms - sunucu güncellemesi
-  ARENA_W: 1000,
-  ARENA_H: 700,
-  FOOD_COUNT: 30,
-  INITIAL_LENGTH: 5,
-  SPEED: 3,
-  GAME_DURATION: 90,    // saniye
+  TICK_RATE: 60,           // ms
+  ARENA_W: 1600,
+  ARENA_H: 1100,
+  BASE_SPEED: 2.8,         // px/tick
+  BOOST_MULT: 1.9,         // boost hız çarpanı
+  BOOST_COST_INTERVAL: 1000, // ms — her saniye boost cezası
+  BOOST_SEGMENT_COST: 1,   // boost'ta saniyede kaybedilen segment
+  INITIAL_LENGTH: 12,
+  SEG_SPACING: 8,          // segmentler arası px
+  HEAD_RADIUS: 9,
+  COLLISION_RADIUS: 8,
+  GROW_PER_FOOD: { small: 2, medium: 4, large: 7 },
+  POINTS_PER_FOOD: { small: 1, medium: 3, large: 5 },
+  FOOD_TYPES: ['small', 'medium', 'large'],
+  FOOD_WEIGHTS: [0.65, 0.28, 0.07], // büyük yem nadir
+  COLORS: [
+    '#ff3e8a', '#00d4ff', '#ffd93d', '#6bcf7f',
+    '#a86bff', '#ff9f4a', '#4ade80', '#f472b6',
+    '#34d399', '#fb923c', '#60a5fa', '#facc15'
+  ],
 
   start(room) {
     if (room.players.length < 2) return false;
+    const settings = room.settings?.yilan || { duration: 120, foodCount: 60, speed: 3 };
+    const speedMul = (settings.speed || 3) / 3;
 
-    const settings = room.settings?.yilan || { duration: 90, foodCount: 30, speed: 3 };
-    const colors = ['#ff3e8a', '#00d4ff', '#ffd93d', '#6bcf7f', '#a86bff', '#ff9f4a', '#4ade80', '#f472b6'];
     const snakes = {};
     room.players.forEach((p, i) => {
-      const startX = 100 + (i % 4) * 200;
-      const startY = 100 + Math.floor(i / 4) * 300;
+      // Spawn pozisyonu — arena içinde dağılmış, kenardan uzak
+      const cols = 4;
+      const cellW = this.ARENA_W / cols;
+      const cellH = this.ARENA_H / 3;
+      const cx = ((i % cols) + 0.5) * cellW;
+      const cy = (Math.floor(i / cols) + 0.5) * cellH;
+      // Başlangıç yönü (rastgele)
+      const angle = Math.random() * Math.PI * 2;
+      const dir = { x: Math.cos(angle), y: Math.sin(angle) };
+      const body = [];
+      for (let j = 0; j < this.INITIAL_LENGTH; j++) {
+        body.push({ x: cx - dir.x * j * this.SEG_SPACING, y: cy - dir.y * j * this.SEG_SPACING });
+      }
       snakes[p.id] = {
         id: p.id,
         name: p.name,
-        color: colors[i % colors.length],
-        body: Array.from({ length: this.INITIAL_LENGTH }, (_, j) => ({
-          x: startX - j * 10,
-          y: startY
-        })),
-        direction: { x: 1, y: 0 },
-        nextDirection: { x: 1, y: 0 },
+        color: this.COLORS[i % this.COLORS.length],
+        body,
+        direction: dir,
+        directionQueue: [],
+        boosting: false,
+        boostAccumMs: 0,
         alive: true,
-        score: 0
+        score: 0,
+        deathTime: null
       };
       p.score = 0;
     });
 
     const foods = [];
-    for (let i = 0; i < settings.foodCount; i++) {
-      foods.push(this.randomFood());
-    }
+    for (let i = 0; i < (settings.foodCount || 60); i++) foods.push(this.randomFood());
 
     room.gameState = {
       type: 'yilan',
+      arenaW: this.ARENA_W,
+      arenaH: this.ARENA_H,
       snakes,
       foods,
-      timeLeft: settings.duration,
-      duration: settings.duration,
-      foodCount: settings.foodCount,
-      speed: settings.speed,
+      timeLeft: settings.duration || 120,
+      duration: settings.duration || 120,
+      foodCount: settings.foodCount || 60,
+      baseSpeed: this.BASE_SPEED * speedMul,
       tickId: null,
       timerId: null,
       gameOver: false,
       winner: null
     };
 
-    // Oyun döngüsü
     room.gameState.tickId = setInterval(() => this.tick(room), this.TICK_RATE);
-    
-    // Süre sayacı
     room.gameState.timerId = setInterval(() => {
       room.gameState.timeLeft--;
-      if (room.gameState.timeLeft <= 0) {
-        this.endGame(room);
-      }
+      if (room.gameState.timeLeft <= 0) this.endGame(room);
     }, 1000);
 
     broadcastRoom(room.code);
     return true;
   },
 
-  randomFood() {
+  randomFood(typeOverride = null) {
+    let type = typeOverride;
+    if (!type) {
+      const r = Math.random();
+      let acc = 0;
+      for (let i = 0; i < this.FOOD_TYPES.length; i++) {
+        acc += this.FOOD_WEIGHTS[i];
+        if (r < acc) { type = this.FOOD_TYPES[i]; break; }
+      }
+      if (!type) type = 'small';
+    }
     return {
       x: Math.floor(Math.random() * (this.ARENA_W - 40)) + 20,
-      y: Math.floor(Math.random() * (this.ARENA_H - 40)) + 20
+      y: Math.floor(Math.random() * (this.ARENA_H - 40)) + 20,
+      type
     };
   },
 
@@ -1662,88 +1802,130 @@ const Yilan = {
     if (!state || state.gameOver) return;
 
     const snakes = state.snakes;
-    
-    // Her yılanı hareket ettir
+    const baseSpeed = state.baseSpeed || this.BASE_SPEED;
+
     for (const id in snakes) {
       const snake = snakes[id];
       if (!snake.alive) continue;
-      
-      snake.direction = snake.nextDirection;
+
+      // Yön kuyruğundan bir sonrakini al (eğer var ve geçerli ise)
+      while (snake.directionQueue.length > 0) {
+        const next = snake.directionQueue.shift();
+        // Tam tersi yön engelle
+        if (snake.direction.x === -next.x && snake.direction.y === -next.y) continue;
+        snake.direction = next;
+        break;
+      }
+
+      // Boost
+      const speed = snake.boosting && snake.body.length > 6 ? baseSpeed * this.BOOST_MULT : baseSpeed;
+      if (snake.boosting && snake.body.length > 6) {
+        snake.boostAccumMs += this.TICK_RATE;
+        if (snake.boostAccumMs >= this.BOOST_COST_INTERVAL) {
+          snake.boostAccumMs -= this.BOOST_COST_INTERVAL;
+          // Boost cezası: tail kaybı + yere yem bırak
+          for (let k = 0; k < this.BOOST_SEGMENT_COST && snake.body.length > 6; k++) {
+            const tail = snake.body.pop();
+            if (tail && Math.random() < 0.5) {
+              // %50 olasılıkla yem bırak
+              state.foods.push({ x: tail.x, y: tail.y, type: 'small' });
+            }
+          }
+        }
+      } else {
+        snake.boostAccumMs = 0;
+        if (snake.boosting && snake.body.length <= 6) snake.boosting = false;
+      }
+
       const head = snake.body[0];
-      const speed = state.speed || this.SPEED;
-      const newHead = {
-        x: head.x + snake.direction.x * speed,
-        y: head.y + snake.direction.y * speed
-      };
+      const newHead = { x: head.x + snake.direction.x * speed, y: head.y + snake.direction.y * speed };
 
       // Duvar çarpması
-      if (newHead.x < 0 || newHead.x > this.ARENA_W || 
-          newHead.y < 0 || newHead.y > this.ARENA_H) {
-        snake.alive = false;
+      if (newHead.x < 0 || newHead.x > state.arenaW || newHead.y < 0 || newHead.y > state.arenaH) {
+        this.killSnake(state, snake);
         continue;
       }
 
-      // Kendine veya başka yılana çarpma
+      // Çarpışma kontrolü — başka yılanların tüm gövdesi + kendi gövdesi (yeterince geride)
       let collided = false;
+      const collR2 = this.COLLISION_RADIUS * this.COLLISION_RADIUS;
+      const headCollR2 = (this.COLLISION_RADIUS + this.HEAD_RADIUS) * (this.COLLISION_RADIUS + this.HEAD_RADIUS) / 4;
       for (const otherId in snakes) {
         const other = snakes[otherId];
         if (!other.alive) continue;
-        // Kendi başını atlama, kendi gövdesine çarpma kontrolü
-        const startIdx = (otherId === id) ? 4 : 0;
-        for (let i = startIdx; i < other.body.length; i++) {
+        // Kendi gövdesinde ilk N segmenti atla (yön değişikliklerinde tight loop'a izin ver)
+        const skipFirst = (otherId === id) ? Math.max(6, Math.ceil(this.HEAD_RADIUS / this.SEG_SPACING) + 2) : 0;
+        for (let i = skipFirst; i < other.body.length; i++) {
           const seg = other.body[i];
           const dx = newHead.x - seg.x;
           const dy = newHead.y - seg.y;
-          if (dx * dx + dy * dy < 100) { // 10px çap
-            collided = true;
-            break;
-          }
+          if (dx * dx + dy * dy < collR2) { collided = true; break; }
         }
         if (collided) break;
       }
       if (collided) {
-        snake.alive = false;
+        this.killSnake(state, snake);
         continue;
       }
 
       // Yem yeme
-      let ate = false;
+      let grew = 0;
+      let points = 0;
       for (let i = state.foods.length - 1; i >= 0; i--) {
         const f = state.foods[i];
         const dx = newHead.x - f.x;
         const dy = newHead.y - f.y;
-        if (dx * dx + dy * dy < 144) { // 12px
+        if (dx * dx + dy * dy < (this.HEAD_RADIUS + 6) * (this.HEAD_RADIUS + 6)) {
+          grew += this.GROW_PER_FOOD[f.type] || 1;
+          points += this.POINTS_PER_FOOD[f.type] || 1;
           state.foods.splice(i, 1);
-          state.foods.push(this.randomFood());
-          snake.score += 1;
-          const player = room.players.find(p => p.id === id);
-          if (player) player.score = snake.score;
-          ate = true;
-          break;
+          // Yerine yeni standart yem ekle (sadece toplam sayıyı koru)
+          if (state.foods.length < state.foodCount) state.foods.push(this.randomFood());
         }
+      }
+      if (grew > 0) {
+        snake.score += points;
+        const player = room.players.find(p => p.id === id);
+        if (player) player.score = snake.score;
       }
 
       // Yeni başı ekle
       snake.body.unshift(newHead);
-      // Yemediyse kuyruğu kes
-      if (!ate) snake.body.pop();
+      // Büyüme miktarı kadar fazla segment tut
+      const targetLen = snake.body.length + grew - 1;
+      while (snake.body.length > targetLen) snake.body.pop();
     }
 
-    // Sadece 1 yılan veya 0 yılan kaldıysa oyun bitti
+    // Oyun bitti mi?
     const aliveCount = Object.values(snakes).filter(s => s.alive).length;
     if (aliveCount <= 1 && room.players.length > 1) {
       this.endGame(room);
       return;
     }
 
-    // Tüm oyunculara light state yolla (full broadcast yerine doğrudan tick eventi)
+    // Hafif tick payload (broadcast yerine ham emit)
     io.to(room.code).emit('yilan:tick', {
       snakes: Object.fromEntries(Object.entries(snakes).map(([id, s]) => [id, {
-        body: s.body, color: s.color, alive: s.alive, name: s.name, score: s.score
+        body: s.body, color: s.color, alive: s.alive,
+        name: s.name, score: s.score, boosting: s.boosting,
+        dir: s.direction
       }])),
       foods: state.foods,
       timeLeft: state.timeLeft
     });
+  },
+
+  killSnake(state, snake) {
+    snake.alive = false;
+    snake.deathTime = Date.now();
+    // Ölünce gövdesi yere yem olarak dağılır (her 2 segmentten 1 yem)
+    for (let i = 0; i < snake.body.length; i += 2) {
+      const seg = snake.body[i];
+      const type = Math.random() < 0.15 ? 'large' : (Math.random() < 0.4 ? 'medium' : 'small');
+      state.foods.push({ x: seg.x, y: seg.y, type });
+    }
+    // Yem sayısını sınırla
+    while (state.foods.length > state.foodCount * 2) state.foods.shift();
   },
 
   changeDirection(room, playerId, direction) {
@@ -1751,12 +1933,27 @@ const Yilan = {
     if (!state || state.gameOver) return;
     const snake = state.snakes[playerId];
     if (!snake || !snake.alive) return;
-    
-    // Geri dönmeyi engelle
-    if (snake.direction.x === -direction.x && snake.direction.y === -direction.y) return;
-    if (Math.abs(direction.x) > 1 || Math.abs(direction.y) > 1) return;
-    
-    snake.nextDirection = direction;
+    // Sadece 4 ana yön kabul
+    const norm = { x: Math.sign(direction.x) || 0, y: Math.sign(direction.y) || 0 };
+    if ((norm.x === 0 && norm.y === 0) || (norm.x !== 0 && norm.y !== 0)) return;
+    // Kuyruğa ekle (en fazla 2 birikme)
+    if (snake.directionQueue.length >= 2) return;
+    // Son kuyruktaki ile aynıysa eklemeye gerek yok
+    const lastDir = snake.directionQueue.length > 0
+      ? snake.directionQueue[snake.directionQueue.length - 1]
+      : snake.direction;
+    if (lastDir.x === norm.x && lastDir.y === norm.y) return;
+    if (lastDir.x === -norm.x && lastDir.y === -norm.y) return; // anlık geri dönüş yasak
+    snake.directionQueue.push(norm);
+  },
+
+  setBoost(room, playerId, on) {
+    const state = room.gameState;
+    if (!state || state.gameOver) return;
+    const snake = state.snakes[playerId];
+    if (!snake || !snake.alive) return;
+    snake.boosting = !!on;
+    if (!on) snake.boostAccumMs = 0;
   },
 
   endGame(room) {
@@ -1765,8 +1962,7 @@ const Yilan = {
     state.gameOver = true;
     if (state.tickId) clearInterval(state.tickId);
     if (state.timerId) clearInterval(state.timerId);
-    
-    // En yüksek skoru bul
+
     const sorted = Object.values(state.snakes).sort((a, b) => b.score - a.score);
     state.winner = sorted[0]?.name || null;
     broadcastRoom(room.code);
@@ -2185,11 +2381,15 @@ const DEFAULT_SETTINGS = {
     discussionTime: 60,
     voteTime: 20,
     nightTime: 25,
-    extraVampire: false // 4-5 kişide 2. vampir
+    extraVampire: false,  // 4-5 kişide 2. vampir
+    doctorCount: 1,       // 0-2
+    detectiveCount: 1,    // 0-2
+    witch: false,         // Cadı dahil mi?
+    jester: false         // Soytarı dahil mi?
   },
   yilan: {
-    duration: 90,
-    foodCount: 30,
+    duration: 120,
+    foodCount: 60,
     speed: 3
   },
   uno: {
@@ -2235,8 +2435,8 @@ io.on('connection', (socket) => {
       socket.emit('room:error', { message: 'Oda bulunamadı!' });
       return;
     }
-    if (room.players.length >= 8) {
-      socket.emit('room:error', { message: 'Oda dolu! (max 8 oyuncu)' });
+    if (room.players.length >= 12) {
+      socket.emit('room:error', { message: 'Oda dolu! (max 12 oyuncu)' });
       return;
     }
     if (room.game) {
@@ -2297,7 +2497,11 @@ io.on('connection', (socket) => {
         discussionTime: [20, 180],
         voteTime: [10, 60],
         nightTime: [10, 60],
-        extraVampire: 'bool'
+        extraVampire: 'bool',
+        doctorCount: [0, 2],
+        detectiveCount: [0, 2],
+        witch: 'bool',
+        jester: 'bool'
       },
       yilan: { duration: [30, 300], foodCount: [10, 60], speed: [2, 5] },
       uno: { initialHand: [5, 10] }
@@ -2501,6 +2705,12 @@ io.on('connection', (socket) => {
     Vampir.detectiveCheck(result.room, socket.id, targetId);
   });
 
+  socket.on('vampir:witchPotion', ({ type, targetId }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'vampir') return;
+    Vampir.witchPotion(result.room, socket.id, type, targetId);
+  });
+
   socket.on('vampir:vote', ({ targetId }) => {
     const result = findPlayerRoom(socket.id);
     if (!result || result.room.game !== 'vampir') return;
@@ -2514,6 +2724,12 @@ io.on('connection', (socket) => {
   });
 
   // --- YILAN SAVAŞI ---
+  socket.on('yilan:boost', ({ on }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'yilan') return;
+    Yilan.setBoost(result.room, socket.id, !!on);
+  });
+
   socket.on('yilan:direction', ({ direction }) => {
     const result = findPlayerRoom(socket.id);
     if (!result || result.room.game !== 'yilan') return;

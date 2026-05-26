@@ -88,42 +88,42 @@
               <div class="game-icon">🔤</div>
               <h3>Kelime Zinciri</h3>
               <p>Son harften başla, sıra sende!</p>
-              <span class="game-meta">2-8 oyuncu · 5 dk</span>
+              <span class="game-meta">2-12 oyuncu · 5 dk</span>
             </button>
 
             <button class="game-card" data-game="hafiza">
               <div class="game-icon">🧠</div>
               <h3>Hafıza Oyunu</h3>
               <p>Çiftleri bul, en çok bilen kazansın</p>
-              <span class="game-meta">2-8 oyuncu · 3 dk</span>
+              <span class="game-meta">2-12 oyuncu · 3 dk</span>
             </button>
 
             <button class="game-card" data-game="cizim">
               <div class="game-icon">🎨</div>
               <h3>Çizim-Tahmin</h3>
               <p>Çiz ve tahmin et!</p>
-              <span class="game-meta">2-8 oyuncu · 10 dk</span>
+              <span class="game-meta">2-12 oyuncu · 10 dk</span>
             </button>
 
             <button class="game-card" data-game="trivia">
               <div class="game-icon">🧠</div>
               <h3>Trivia</h3>
               <p>10 soru, hızlı cevapla!</p>
-              <span class="game-meta">2-8 oyuncu · 4 dk</span>
+              <span class="game-meta">2-12 oyuncu · 4 dk</span>
             </button>
 
             <button class="game-card" data-game="vampir">
               <div class="game-icon">🧛</div>
               <h3>Vampir Köylü</h3>
               <p>Köylüleri vampirlerden kurtar!</p>
-              <span class="game-meta">4-8 oyuncu · 10 dk</span>
+              <span class="game-meta">4-12 oyuncu · 10 dk</span>
             </button>
 
             <button class="game-card" data-game="yilan">
               <div class="game-icon">🐍</div>
               <h3>Yılan Savaşı</h3>
               <p>Büyü, hayatta kal!</p>
-              <span class="game-meta">2-8 oyuncu · 90 sn</span>
+              <span class="game-meta">2-12 oyuncu · 90 sn</span>
             </button>
 
             <button class="game-card" data-game="amiral">
@@ -137,7 +137,7 @@
               <div class="game-icon">🃏</div>
               <h3>Uno Benzeri</h3>
               <p>Tüm kartlardan kurtul!</p>
-              <span class="game-meta">2-8 oyuncu · 5 dk</span>
+              <span class="game-meta">2-12 oyuncu · 5 dk</span>
             </button>
           </div>
           <p class="hint" id="host-hint">Sadece oda kurucusu oyun başlatabilir.</p>
@@ -425,14 +425,31 @@
       </div>
 
       <div class="yilan-top">
-        <span class="yilan-status" id="yilan-status">Hareket etmek için ok tuşları veya WASD</span>
+        <span class="yilan-status" id="yilan-status">WASD veya ok tuşları · SHIFT = boost</span>
         <div class="timer-circle small">
-          <span id="yilan-timer">90</span>
+          <span id="yilan-timer">120</span>
         </div>
       </div>
 
       <div class="yilan-arena-wrap">
-        <canvas id="yilan-canvas" width="1000" height="700"></canvas>
+        <canvas id="yilan-canvas" width="1000" height="640"></canvas>
+        <div class="yilan-overlay" id="yilan-overlay">
+          <div class="yilan-leaderboard" id="yilan-leaderboard">
+            <h4>🏆 Lider</h4>
+            <ol id="yilan-leaderboard-list"></ol>
+          </div>
+          <div class="yilan-self-stat" id="yilan-self-stat">
+            <span class="self-len" id="yilan-self-len">Uzunluk: -</span>
+            <span class="self-score" id="yilan-self-score">Skor: 0</span>
+          </div>
+        </div>
+        <div class="yilan-death-overlay" id="yilan-death-overlay" style="display:none">
+          <div class="death-card">
+            <h3>💀 Öldün</h3>
+            <p>Yılanın gövdesi yeme dönüştü — başkaları toplayacak.</p>
+            <p class="sub">Diğer oyuncuları izleyebilirsin.</p>
+          </div>
+        </div>
       </div>
 
       <div class="yilan-mobile-controls" id="yilan-mobile-controls">
@@ -442,6 +459,7 @@
           <button class="d-btn d-down" data-dir="down">↓</button>
           <button class="d-btn d-right" data-dir="right">→</button>
         </div>
+        <button class="btn btn-primary btn-boost" id="yilan-boost-btn">⚡ BOOST</button>
       </div>
 
       <div class="scoreboard" id="yilan-scoreboard"></div>
@@ -718,6 +736,28 @@
             <label>
               <input type="checkbox" id="set-vampir-extraVampire" data-game="vampir" data-key="extraVampire"/>
               4-5 kişide 2 vampir olsun (köylüler için daha zor)
+            </label>
+          </div>
+          <div class="setting-row">
+            <label>Doktor sayısı: <span class="setting-value" id="set-vampir-doctorCount-val">1</span></label>
+            <input type="range" id="set-vampir-doctorCount" min="0" max="2" value="1" data-game="vampir" data-key="doctorCount"/>
+            <span class="setting-info">Her doktor her gece birini korur</span>
+          </div>
+          <div class="setting-row">
+            <label>Dedektif sayısı: <span class="setting-value" id="set-vampir-detectiveCount-val">1</span></label>
+            <input type="range" id="set-vampir-detectiveCount" min="0" max="2" value="1" data-game="vampir" data-key="detectiveCount"/>
+            <span class="setting-info">Her dedektif her gece birini sorgular</span>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-vampir-witch" data-game="vampir" data-key="witch"/>
+              🧙 Cadı dahil olsun (1 koruma + 1 öldürme iksiri)
+            </label>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-vampir-jester" data-game="vampir" data-key="jester"/>
+              🤡 Soytarı dahil olsun (köylüler idam ederse kazanır)
             </label>
           </div>
         </div>

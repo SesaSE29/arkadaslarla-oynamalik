@@ -2091,26 +2091,169 @@ input[type="text"]:focus {
 }
 
 .yilan-arena-wrap {
-  background: var(--color-surface);
+  position: relative;
+  background: #05021a;
   border-radius: var(--radius-lg);
-  padding: 12px;
-  box-shadow: var(--shadow-card);
+  padding: 0;
+  box-shadow: var(--shadow-card), 0 0 40px rgba(255, 62, 138, 0.18);
   margin-bottom: 12px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 62, 138, 0.3);
+  height: 640px;
+}
+
+@media (max-width: 800px) {
+  .yilan-arena-wrap { height: 60vh; min-height: 380px; }
 }
 
 #yilan-canvas {
   width: 100%;
-  height: auto;
-  aspect-ratio: 10/7;
-  background: #0a0420;
-  border-radius: var(--radius-md);
+  height: 100%;
+  background: #05021a;
   display: block;
+}
+
+/* Overlay (leaderboard + self stat) */
+.yilan-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.yilan-leaderboard {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(10, 4, 32, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  min-width: 180px;
+  color: white;
+  backdrop-filter: blur(6px);
+}
+
+.yilan-leaderboard h4 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.yilan-leaderboard ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.yilan-leaderboard li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.yilan-leaderboard li:first-child { border-top: none; }
+.yilan-leaderboard li.me { color: var(--color-accent-1, #ffd93d); }
+.yilan-leaderboard li.dead { opacity: 0.4; text-decoration: line-through; }
+
+.yilan-leaderboard .dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.yilan-leaderboard .lb-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.yilan-leaderboard .lb-score {
+  font-weight: 900;
+  font-family: var(--font-display);
+}
+
+.yilan-self-stat {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  gap: 10px;
+  background: rgba(10, 4, 32, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 6px 16px;
+  color: white;
+  font-weight: 700;
+  font-size: 0.85rem;
+  backdrop-filter: blur(6px);
+}
+
+.yilan-self-stat .self-len { color: var(--color-secondary, #00d4ff); }
+.yilan-self-stat .self-score { color: var(--color-accent-1, #ffd93d); }
+
+.yilan-death-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 4, 32, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.yilan-death-overlay .death-card {
+  background: rgba(20, 10, 50, 0.95);
+  border: 2px solid var(--color-primary, #ff3e8a);
+  border-radius: var(--radius-lg);
+  padding: 24px 36px;
+  text-align: center;
+  color: white;
+  box-shadow: 0 0 40px rgba(255, 62, 138, 0.4);
+}
+
+.yilan-death-overlay h3 {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  margin-bottom: 8px;
+}
+
+.yilan-death-overlay .sub {
+  color: rgba(255, 255, 255, 0.6);
+  font-style: italic;
+  margin-top: 4px;
+  font-size: 0.9rem;
 }
 
 .yilan-mobile-controls {
   display: none;
-  justify-content: center;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 12px;
+  gap: 16px;
+}
+
+.btn-boost {
+  font-weight: 900;
+  background: linear-gradient(135deg, #ffd93d, #ff9f4a) !important;
+  color: #5c4400 !important;
+  padding: 16px 24px !important;
+  border-radius: 999px !important;
+  font-size: 1.1rem !important;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.btn-boost:active {
+  background: linear-gradient(135deg, #ff9f4a, #ff3e8a) !important;
+  color: white !important;
 }
 
 @media (max-width: 768px) {

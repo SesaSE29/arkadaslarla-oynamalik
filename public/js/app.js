@@ -1027,7 +1027,8 @@ const vampirState = {
   myRole: null,
   teammates: [], // vampir takım arkadaşları
   selectedTarget: null,
-  detectiveResults: [] // önceki dedektif kontrolleri
+  detectiveResults: [], // önceki dedektif kontrolleri
+  witchMode: null // 'protect' | 'kill' | null
 };
 
 document.getElementById('vampir-exit').addEventListener('click', exitGame);
@@ -1058,8 +1059,8 @@ function renderVampir() {
   // Kendi rolüm
   const roleEl = document.getElementById('vampir-my-role');
   if (vampirState.myRole) {
-    const emojiMap = { vampir: '🧛', doktor: '⚕️', dedektif: '🔍', koylu: '👨‍🌾' };
-    const nameMap = { vampir: 'Vampir', doktor: 'Doktor', dedektif: 'Dedektif', koylu: 'Köylü' };
+    const emojiMap = { vampir: '🧛', doktor: '⚕️', dedektif: '🔍', cadi: '🧙', soytari: '🤡', koylu: '👨‍🌾' };
+    const nameMap = { vampir: 'Vampir', doktor: 'Doktor', dedektif: 'Dedektif', cadi: 'Cadı', soytari: 'Soytarı', koylu: 'Köylü' };
     roleEl.textContent = `${emojiMap[vampirState.myRole]} ${nameMap[vampirState.myRole]}`;
   }
 
@@ -1103,6 +1104,7 @@ function renderVampir() {
         if (vampirState.myRole === 'vampir' && p.role !== 'vampir') canSelect = true;
         if (vampirState.myRole === 'doktor') canSelect = true;
         if (vampirState.myRole === 'dedektif') canSelect = true;
+        if (vampirState.myRole === 'cadi' && vampirState.witchMode) canSelect = true;
       } else if (gs.phase === 'dayVote') {
         canSelect = true;
       }
@@ -1115,6 +1117,10 @@ function renderVampir() {
             if (vampirState.myRole === 'vampir') socket.emit('vampir:kill', { targetId: p.id });
             else if (vampirState.myRole === 'doktor') socket.emit('vampir:save', { targetId: p.id });
             else if (vampirState.myRole === 'dedektif') socket.emit('vampir:check', { targetId: p.id });
+            else if (vampirState.myRole === 'cadi' && vampirState.witchMode) {
+              socket.emit('vampir:witchPotion', { type: vampirState.witchMode, targetId: p.id });
+              vampirState.witchMode = null;
+            }
           } else if (gs.phase === 'dayVote') {
             socket.emit('vampir:vote', { targetId: p.id });
           }
@@ -1122,15 +1128,26 @@ function renderVampir() {
         });
       }
     }
-    // Kendine de doktor olarak oy verebilir (kendini koru)
-    else if (isAlive && p.id === state.you?.id && vampirState.myRole === 'doktor' && gs.phase === 'night') {
-      item.classList.add('selectable');
-      if (vampirState.selectedTarget === p.id) item.classList.add('selected');
-      item.addEventListener('click', () => {
-        vampirState.selectedTarget = p.id;
-        socket.emit('vampir:save', { targetId: p.id });
-        renderVampir();
-      });
+    // Kendine doktor / cadı koruma — koruma için seç
+    else if (isAlive && p.id === state.you?.id && gs.phase === 'night') {
+      if (vampirState.myRole === 'doktor') {
+        item.classList.add('selectable');
+        if (vampirState.selectedTarget === p.id) item.classList.add('selected');
+        item.addEventListener('click', () => {
+          vampirState.selectedTarget = p.id;
+          socket.emit('vampir:save', { targetId: p.id });
+          renderVampir();
+        });
+      } else if (vampirState.myRole === 'cadi' && vampirState.witchMode === 'protect') {
+        item.classList.add('selectable');
+        if (vampirState.selectedTarget === p.id) item.classList.add('selected');
+        item.addEventListener('click', () => {
+          vampirState.selectedTarget = p.id;
+          socket.emit('vampir:witchPotion', { type: 'protect', targetId: p.id });
+          vampirState.witchMode = null;
+          renderVampir();
+        });
+      }
     }
 
     playersDiv.appendChild(item);
@@ -1152,10 +1169,36 @@ function renderVampir() {
       msg = '⚕️ <strong>Doktor gecesi!</strong> Bu gece kimi koruyacaksın? Kendini de seçebilirsin.';
     } else if (vampirState.myRole === 'dedektif') {
       msg = '🔍 <strong>Dedektif gecesi!</strong> Vampir mi diye bakmak için bir oyuncu seç.';
+    } else if (vampirState.myRole === 'cadi') {
+      const myPotions = (gs.witchPotions && state.you) ? gs.witchPotions[state.you.id] : null;
+      const protectLeft = myPotions?.protect ?? 0;
+      const killLeft = myPotions?.kill ?? 0;
+      msg = `🧙 <strong>Cadı gecesi!</strong> İksir kullanmak için aşağıdan birini seç.<br>
+        Kalan iksir: 🛡️ Koruma ×${protectLeft} | 💀 Öldürme ×${killLeft}`;
+      msg += `
+        <div class="witch-controls" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" id="witch-mode-protect" ${protectLeft <= 0 ? 'disabled' : ''}>🛡️ Koruma modu</button>
+          <button class="btn btn-secondary btn-sm" id="witch-mode-kill" ${killLeft <= 0 ? 'disabled' : ''}>💀 Öldürme modu</button>
+          <button class="btn btn-ghost btn-sm" id="witch-mode-pass">Bu gece pas</button>
+        </div>
+        <p class="vampir-instructions" style="margin-top:8px;font-size:0.85rem">
+          Mod seç → sonra alttaki oyuncu listesinden hedef tıkla.
+          <strong>Mevcut mod: ${vampirState.witchMode || 'yok'}</strong>
+        </p>`;
+    } else if (vampirState.myRole === 'soytari') {
+      msg = '🤡 <strong>Soytarısın!</strong> Hedefin gündüz oylamada idam edilmek. Diğerlerine vampir gibi davran ki seni assınlar!';
     } else {
       msg = '😴 <strong>Köylüsün, uyuyorsun...</strong> Sabah neler olduğunu öğreneceksin.';
     }
     actionDiv.innerHTML = `<p class="vampir-instructions">${msg}</p>`;
+
+    // Cadı mod butonları
+    const protBtn = document.getElementById('witch-mode-protect');
+    if (protBtn) protBtn.addEventListener('click', () => { vampirState.witchMode = 'protect'; renderVampir(); });
+    const killBtn = document.getElementById('witch-mode-kill');
+    if (killBtn) killBtn.addEventListener('click', () => { vampirState.witchMode = 'kill'; renderVampir(); });
+    const passBtn = document.getElementById('witch-mode-pass');
+    if (passBtn) passBtn.addEventListener('click', () => { vampirState.witchMode = null; renderVampir(); });
   } else if (gs.phase === 'dayDiscussion') {
     actionDiv.innerHTML = `
       <p class="vampir-instructions">💬 <strong>Tartışma zamanı!</strong> Vampirleri bulmak için konuşun.</p>
@@ -1245,16 +1288,27 @@ const yilanCtx = yilanCanvas.getContext('2d');
 const yilanState = {
   snakes: {},
   foods: [],
-  lastTick: null
+  arenaW: 1600,
+  arenaH: 1100,
+  camera: { x: 0, y: 0 },
+  boostHeld: false,
+  animFrame: null,
+  starField: null
 };
 
 document.getElementById('yilan-exit').addEventListener('click', exitGame);
 document.getElementById('yilan-back-lobby').addEventListener('click', exitGame);
 
-// Yön kontrolü
 function setYilanDir(dx, dy) {
   if (state.game !== 'yilan') return;
   socket.emit('yilan:direction', { direction: { x: dx, y: dy } });
+}
+
+function setYilanBoost(on) {
+  if (state.game !== 'yilan') return;
+  if (yilanState.boostHeld === on) return;
+  yilanState.boostHeld = on;
+  socket.emit('yilan:boost', { on });
 }
 
 document.addEventListener('keydown', (e) => {
@@ -1263,6 +1317,11 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { setYilanDir(0, 1); e.preventDefault(); }
   else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { setYilanDir(-1, 0); e.preventDefault(); }
   else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { setYilanDir(1, 0); e.preventDefault(); }
+  else if (e.key === 'Shift') { setYilanBoost(true); e.preventDefault(); }
+});
+document.addEventListener('keyup', (e) => {
+  if (state.game !== 'yilan') return;
+  if (e.key === 'Shift') { setYilanBoost(false); e.preventDefault(); }
 });
 
 // Mobil d-pad
@@ -1274,108 +1333,282 @@ document.querySelectorAll('.d-btn').forEach(btn => {
     if (d) setYilanDir(d[0], d[1]);
   };
   btn.addEventListener('click', handler);
-  btn.addEventListener('touchstart', handler);
+  btn.addEventListener('touchstart', handler, { passive: false });
 });
 
+// Mobil boost butonu (basılı tutma)
+const boostBtn = document.getElementById('yilan-boost-btn');
+if (boostBtn) {
+  const start = (e) => { e.preventDefault(); setYilanBoost(true); };
+  const end = (e) => { e.preventDefault(); setYilanBoost(false); };
+  boostBtn.addEventListener('mousedown', start);
+  boostBtn.addEventListener('mouseup', end);
+  boostBtn.addEventListener('mouseleave', end);
+  boostBtn.addEventListener('touchstart', start, { passive: false });
+  boostBtn.addEventListener('touchend', end);
+}
+
+// Yıldız alan üret (arka plan dekoru)
+function buildStarField() {
+  if (yilanState.starField) return;
+  const stars = [];
+  const N = 120;
+  for (let i = 0; i < N; i++) {
+    stars.push({
+      x: Math.random() * yilanState.arenaW,
+      y: Math.random() * yilanState.arenaH,
+      r: Math.random() * 1.4 + 0.3,
+      a: Math.random() * 0.6 + 0.2
+    });
+  }
+  yilanState.starField = stars;
+}
+
+// Canvas boyutu (responsive)
+function resizeYilanCanvas() {
+  const wrap = document.querySelector('.yilan-arena-wrap');
+  if (!wrap) return;
+  const rect = wrap.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  yilanCanvas.width = rect.width * dpr;
+  yilanCanvas.height = rect.height * dpr;
+  yilanCanvas.style.width = rect.width + 'px';
+  yilanCanvas.style.height = rect.height + 'px';
+  yilanCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resizeYilanCanvas);
+
 function drawYilan() {
-  const ARENA_W = 1000;
-  const ARENA_H = 700;
-  yilanCtx.fillStyle = '#0a0420';
-  yilanCtx.fillRect(0, 0, yilanCanvas.width, yilanCanvas.height);
+  const cssW = yilanCanvas.clientWidth || yilanCanvas.width;
+  const cssH = yilanCanvas.clientHeight || yilanCanvas.height;
+  const arenaW = yilanState.arenaW;
+  const arenaH = yilanState.arenaH;
 
-  // Grid çizgileri
-  yilanCtx.strokeStyle = 'rgba(255,255,255,0.05)';
+  // Kamerayı oyuncunun yılanına merkezle (yoksa arena merkezi)
+  const me = yilanState.snakes[state.you?.id];
+  let camX = arenaW / 2 - cssW / 2;
+  let camY = arenaH / 2 - cssH / 2;
+  if (me && me.body && me.body.length > 0) {
+    camX = me.body[0].x - cssW / 2;
+    camY = me.body[0].y - cssH / 2;
+  }
+  // Arena sınırlarına clamp
+  camX = Math.max(0, Math.min(arenaW - cssW, camX));
+  camY = Math.max(0, Math.min(arenaH - cssH, camY));
+  yilanState.camera.x = camX;
+  yilanState.camera.y = camY;
+
+  // Arka plan
+  const grad = yilanCtx.createRadialGradient(cssW / 2, cssH / 2, 100, cssW / 2, cssH / 2, Math.max(cssW, cssH));
+  grad.addColorStop(0, '#1a0b3a');
+  grad.addColorStop(1, '#05021a');
+  yilanCtx.fillStyle = grad;
+  yilanCtx.fillRect(0, 0, cssW, cssH);
+
+  // Kamera offsetli world coords
+  yilanCtx.save();
+  yilanCtx.translate(-camX, -camY);
+
+  // Yıldızlar
+  if (yilanState.starField) {
+    for (const s of yilanState.starField) {
+      yilanCtx.globalAlpha = s.a;
+      yilanCtx.fillStyle = '#ffffff';
+      yilanCtx.beginPath();
+      yilanCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      yilanCtx.fill();
+    }
+    yilanCtx.globalAlpha = 1;
+  }
+
+  // Arena sınırı (kırmızımsı parlak çerçeve)
+  yilanCtx.strokeStyle = 'rgba(255, 62, 138, 0.6)';
+  yilanCtx.lineWidth = 4;
+  yilanCtx.shadowColor = '#ff3e8a';
+  yilanCtx.shadowBlur = 20;
+  yilanCtx.strokeRect(0, 0, arenaW, arenaH);
+  yilanCtx.shadowBlur = 0;
+
+  // Grid (zayıf çizgiler)
+  yilanCtx.strokeStyle = 'rgba(255,255,255,0.06)';
   yilanCtx.lineWidth = 1;
-  for (let i = 0; i < ARENA_W; i += 50) {
+  const gridSize = 80;
+  const startX = Math.floor(camX / gridSize) * gridSize;
+  const startY = Math.floor(camY / gridSize) * gridSize;
+  for (let x = startX; x < camX + cssW + gridSize; x += gridSize) {
     yilanCtx.beginPath();
-    yilanCtx.moveTo(i, 0);
-    yilanCtx.lineTo(i, ARENA_H);
+    yilanCtx.moveTo(x, Math.max(0, camY));
+    yilanCtx.lineTo(x, Math.min(arenaH, camY + cssH));
     yilanCtx.stroke();
   }
-  for (let i = 0; i < ARENA_H; i += 50) {
+  for (let y = startY; y < camY + cssH + gridSize; y += gridSize) {
     yilanCtx.beginPath();
-    yilanCtx.moveTo(0, i);
-    yilanCtx.lineTo(ARENA_W, i);
+    yilanCtx.moveTo(Math.max(0, camX), y);
+    yilanCtx.lineTo(Math.min(arenaW, camX + cssW), y);
     yilanCtx.stroke();
   }
 
-  // Yemler
+  // Yemler — viewport içindekileri çiz
+  const foodStyles = {
+    small:  { r: 5,  color: '#ffd93d', glow: '#fff5b8', pulse: 0 },
+    medium: { r: 8,  color: '#00d4ff', glow: '#a0eaff', pulse: 0.15 },
+    large:  { r: 12, color: '#a86bff', glow: '#dfc9ff', pulse: 0.25 }
+  };
+  const t = Date.now() / 400;
   yilanState.foods.forEach(f => {
-    yilanCtx.fillStyle = '#ffd93d';
+    if (f.x < camX - 30 || f.x > camX + cssW + 30 || f.y < camY - 30 || f.y > camY + cssH + 30) return;
+    const s = foodStyles[f.type] || foodStyles.small;
+    const r = s.r * (1 + Math.sin(t + (f.x + f.y) * 0.01) * s.pulse);
+    yilanCtx.shadowColor = s.color;
+    yilanCtx.shadowBlur = 12;
+    yilanCtx.fillStyle = s.color;
     yilanCtx.beginPath();
-    yilanCtx.arc(f.x, f.y, 6, 0, Math.PI * 2);
+    yilanCtx.arc(f.x, f.y, r, 0, Math.PI * 2);
     yilanCtx.fill();
-    yilanCtx.fillStyle = '#fff5b8';
+    yilanCtx.shadowBlur = 0;
+    yilanCtx.fillStyle = s.glow;
     yilanCtx.beginPath();
-    yilanCtx.arc(f.x - 2, f.y - 2, 2, 0, Math.PI * 2);
+    yilanCtx.arc(f.x - r * 0.3, f.y - r * 0.3, r * 0.35, 0, Math.PI * 2);
     yilanCtx.fill();
   });
 
-  // Yılanlar
-  for (const id in yilanState.snakes) {
-    const snake = yilanState.snakes[id];
-    if (!snake.body || snake.body.length === 0) continue;
+  // Yılanlar — önce ölüleri, sonra canlıları (canlılar üstte)
+  const drawSnake = (snake) => {
+    if (!snake.body || snake.body.length === 0) return;
+    yilanCtx.globalAlpha = snake.alive ? 1 : 0.25;
 
-    if (!snake.alive) {
-      yilanCtx.globalAlpha = 0.3;
-    }
+    // Glow
+    yilanCtx.shadowColor = snake.color;
+    yilanCtx.shadowBlur = snake.boosting ? 22 : 12;
 
-    // Gövde
-    yilanCtx.strokeStyle = snake.color;
-    yilanCtx.lineWidth = 14;
+    // Gövde — kuyruktan başa doğru, kalınlık artarak
+    const bodyLen = snake.body.length;
     yilanCtx.lineCap = 'round';
     yilanCtx.lineJoin = 'round';
+    yilanCtx.strokeStyle = snake.color;
+    yilanCtx.lineWidth = 14;
     yilanCtx.beginPath();
-    yilanCtx.moveTo(snake.body[0].x, snake.body[0].y);
-    for (let i = 1; i < snake.body.length; i++) {
+    yilanCtx.moveTo(snake.body[bodyLen - 1].x, snake.body[bodyLen - 1].y);
+    for (let i = bodyLen - 2; i >= 0; i--) {
       yilanCtx.lineTo(snake.body[i].x, snake.body[i].y);
     }
     yilanCtx.stroke();
+
+    yilanCtx.shadowBlur = 0;
 
     // Baş
     const head = snake.body[0];
     yilanCtx.fillStyle = snake.color;
     yilanCtx.beginPath();
-    yilanCtx.arc(head.x, head.y, 9, 0, Math.PI * 2);
+    yilanCtx.arc(head.x, head.y, 10, 0, Math.PI * 2);
     yilanCtx.fill();
-    
-    // Gözler
+
+    // Boost halkası
+    if (snake.boosting) {
+      yilanCtx.strokeStyle = '#fff';
+      yilanCtx.lineWidth = 2;
+      yilanCtx.globalAlpha = 0.7;
+      yilanCtx.beginPath();
+      yilanCtx.arc(head.x, head.y, 13 + Math.sin(t * 3) * 2, 0, Math.PI * 2);
+      yilanCtx.stroke();
+      yilanCtx.globalAlpha = snake.alive ? 1 : 0.25;
+    }
+
+    // Gözler (yöne göre)
+    const dir = snake.dir || { x: 1, y: 0 };
+    const eyeDx = -dir.y * 3.5;
+    const eyeDy = dir.x * 3.5;
+    const eyeFwd = 3;
     yilanCtx.fillStyle = 'white';
     yilanCtx.beginPath();
-    yilanCtx.arc(head.x - 3, head.y - 3, 2.5, 0, Math.PI * 2);
-    yilanCtx.arc(head.x + 3, head.y - 3, 2.5, 0, Math.PI * 2);
+    yilanCtx.arc(head.x + dir.x * eyeFwd + eyeDx, head.y + dir.y * eyeFwd + eyeDy, 2.8, 0, Math.PI * 2);
+    yilanCtx.arc(head.x + dir.x * eyeFwd - eyeDx, head.y + dir.y * eyeFwd - eyeDy, 2.8, 0, Math.PI * 2);
     yilanCtx.fill();
-    yilanCtx.fillStyle = '#1a0b2e';
+    yilanCtx.fillStyle = '#0a0420';
     yilanCtx.beginPath();
-    yilanCtx.arc(head.x - 3, head.y - 3, 1.2, 0, Math.PI * 2);
-    yilanCtx.arc(head.x + 3, head.y - 3, 1.2, 0, Math.PI * 2);
+    yilanCtx.arc(head.x + dir.x * (eyeFwd + 0.8) + eyeDx, head.y + dir.y * (eyeFwd + 0.8) + eyeDy, 1.3, 0, Math.PI * 2);
+    yilanCtx.arc(head.x + dir.x * (eyeFwd + 0.8) - eyeDx, head.y + dir.y * (eyeFwd + 0.8) - eyeDy, 1.3, 0, Math.PI * 2);
     yilanCtx.fill();
 
     // İsim etiketi
-    yilanCtx.globalAlpha = snake.alive ? 1 : 0.5;
-    yilanCtx.fillStyle = 'white';
     yilanCtx.font = 'bold 14px Fredoka, sans-serif';
     yilanCtx.textAlign = 'center';
-    yilanCtx.fillText(snake.name, head.x, head.y - 16);
-    
+    yilanCtx.fillStyle = 'rgba(0,0,0,0.6)';
+    yilanCtx.fillText(snake.name, head.x + 1, head.y - 18 + 1);
+    yilanCtx.fillStyle = 'white';
+    yilanCtx.fillText(snake.name, head.x, head.y - 18);
+
     yilanCtx.globalAlpha = 1;
+  };
+
+  const all = Object.values(yilanState.snakes);
+  all.filter(s => !s.alive).forEach(drawSnake);
+  all.filter(s => s.alive).forEach(drawSnake);
+
+  yilanCtx.restore();
+}
+
+// Render döngüsü (60fps, interpolasyon yok ama akıcı)
+function startYilanRenderLoop() {
+  if (yilanState.animFrame) return;
+  const loop = () => {
+    if (state.game !== 'yilan') {
+      yilanState.animFrame = null;
+      return;
+    }
+    drawYilan();
+    yilanState.animFrame = requestAnimationFrame(loop);
+  };
+  yilanState.animFrame = requestAnimationFrame(loop);
+}
+function stopYilanRenderLoop() {
+  if (yilanState.animFrame) {
+    cancelAnimationFrame(yilanState.animFrame);
+    yilanState.animFrame = null;
   }
 }
 
 function renderYilan() {
   const gs = state.gameState;
   if (!gs) return;
-  document.getElementById('yilan-timer').textContent = gs.timeLeft;
+  if (gs.arenaW) yilanState.arenaW = gs.arenaW;
+  if (gs.arenaH) yilanState.arenaH = gs.arenaH;
+  buildStarField();
+  resizeYilanCanvas();
+  startYilanRenderLoop();
 
-  // Skor tablosu
+  document.getElementById('yilan-timer').textContent = gs.timeLeft;
   renderScoreboard('yilan-scoreboard', -1);
 
   const me = yilanState.snakes[state.you?.id];
+  const statusEl = document.getElementById('yilan-status');
   if (me && !me.alive) {
-    document.getElementById('yilan-status').textContent = '💀 Öldün! Sonucu bekle...';
+    statusEl.textContent = '💀 Öldün — başkalarını izle';
+    const deathOv = document.getElementById('yilan-death-overlay');
+    if (deathOv) deathOv.style.display = '';
   } else {
-    document.getElementById('yilan-status').textContent = 
-      `Skor: ${me?.score || 0} | Yem ye, çarpma!`;
+    statusEl.textContent = 'WASD / oklar · SHIFT = boost (gövde harcar)';
+    const deathOv = document.getElementById('yilan-death-overlay');
+    if (deathOv) deathOv.style.display = 'none';
+  }
+
+  // Self stats
+  const selfLen = document.getElementById('yilan-self-len');
+  const selfScore = document.getElementById('yilan-self-score');
+  if (selfLen) selfLen.textContent = `Uzunluk: ${me?.body?.length || 0}`;
+  if (selfScore) selfScore.textContent = `Skor: ${me?.score || 0}`;
+
+  // Lider tablosu — yılanları skoruna göre sırala
+  const lb = document.getElementById('yilan-leaderboard-list');
+  if (lb) {
+    const sorted = Object.values(yilanState.snakes).sort((a, b) => b.score - a.score).slice(0, 5);
+    lb.innerHTML = sorted.map(s => `
+      <li class="${s.alive ? '' : 'dead'} ${s.id === state.you?.id ? 'me' : ''}">
+        <span class="dot" style="background:${s.color}"></span>
+        <span class="lb-name">${escapeHtml(s.name)}</span>
+        <span class="lb-score">${s.score}</span>
+      </li>
+    `).join('');
   }
 
   // Oyun bitti
@@ -1387,10 +1620,11 @@ function renderYilan() {
     finalScores.innerHTML = sorted.map((p, i) => `
       <div class="row ${i === 0 ? 'winner' : ''}">
         <span>${i + 1}. ${escapeHtml(p.name)}</span>
-        <span>${p.score} yem</span>
+        <span>${p.score} puan</span>
       </div>
     `).join('');
     gameOverEl.style.display = 'flex';
+    stopYilanRenderLoop();
   } else {
     gameOverEl.style.display = 'none';
   }
@@ -2163,13 +2397,12 @@ socket.on('yilan:tick', ({ snakes, foods, timeLeft }) => {
   yilanState.foods = foods;
   if (state.gameState) {
     state.gameState.timeLeft = timeLeft;
-    // Skorları güncelle
     for (const id in snakes) {
       const p = state.players.find(p => p.id === id);
       if (p) p.score = snakes[id].score;
     }
   }
-  drawYilan();
+  // Render loop kendi çizimini yapar (rAF)
   // Timer'ı güncelle (her saniyede bir yapsak yeterli ama burada her tick'te güncel olur)
   const timerEl = document.getElementById('yilan-timer');
   if (timerEl) timerEl.textContent = timeLeft;
