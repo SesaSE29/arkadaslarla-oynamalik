@@ -1097,10 +1097,11 @@ input[type="text"]:focus {
 }
 
 .memory-card .card-mark {
-  font-size: 2.4rem;
+  font-size: clamp(2.2rem, 7vw, 3.4rem);
   font-weight: 900;
   text-shadow: 0 3px 0 rgba(0,0,0,0.25);
   letter-spacing: -0.05em;
+  line-height: 1;
   transform: rotate(-8deg);
   animation: cardMarkFloat 3.2s ease-in-out infinite;
 }
@@ -1377,7 +1378,158 @@ input[type="text"]:focus {
 .tool-btn.clear-btn {
   background: var(--color-surface-soft) !important;
   border: 2px solid var(--color-danger);
+}
+
+.tool-btn.brush-btn {
+  background: white !important;
+  border: 2px solid var(--color-text-light);
+  font-weight: 900;
+  font-size: 1.2rem;
+  color: var(--color-text);
+}
+
+.tool-btn.brush-btn.active {
+  background: var(--color-accent-3, #a86bff) !important;
+  color: white;
+  border-color: var(--color-accent-3, #a86bff);
+}
+
+.tool-btn.undo-btn {
+  background: var(--color-secondary, #00d4ff) !important;
+  color: var(--color-text);
+  font-weight: 900;
+  font-size: 1.3rem;
+}
+
+.tool-btn.hint-btn {
+  background: linear-gradient(135deg, var(--color-accent-1, #ffd93d), #ffe97a) !important;
+  width: auto !important;
+  padding: 4px 14px !important;
+  border-radius: 18px !important;
+  border: 2px solid var(--color-accent-1, #ffd93d);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #5c4400;
   margin-left: auto;
+  white-space: nowrap;
+}
+
+.tool-btn.hint-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tool-divider {
+  width: 2px;
+  height: 28px;
+  background: rgba(0,0,0,0.1);
+  border-radius: 1px;
+}
+
+/* Kelime seçim modali */
+.cizim-word-select {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 11, 46, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 95;
+  animation: fadeIn 0.3s;
+}
+
+.word-select-card {
+  background: white;
+  padding: 32px;
+  border-radius: var(--radius-lg);
+  text-align: center;
+  box-shadow: 0 12px 0 rgba(0,0,0,0.2);
+  max-width: 480px;
+  width: 90%;
+}
+
+.word-select-card h3 {
+  font-family: var(--font-display);
+  margin-bottom: 12px;
+  font-size: 1.6rem;
+}
+
+.select-hint {
+  color: var(--color-text-light);
+  margin-bottom: 24px;
+}
+
+.word-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 500px) {
+  .word-choices { grid-template-columns: 1fr; }
+}
+
+.word-choice-btn {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-accent-3));
+  color: white;
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  padding: 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  box-shadow: 0 6px 0 rgba(0,0,0,0.2);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.word-choice-btn:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 0 rgba(0,0,0,0.25);
+}
+
+.word-choice-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 rgba(0,0,0,0.2);
+}
+
+/* Tur sonu özet tablosu */
+.reveal-summary {
+  margin: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--color-surface-soft);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  border-left: 4px solid var(--color-text-light);
+}
+
+.summary-row.is-correct { border-left-color: var(--color-success, #4ade80); background: linear-gradient(90deg, #e0ffe0, var(--color-surface-soft)); }
+.summary-row.is-wrong   { border-left-color: var(--color-danger, #ef4444); opacity: 0.75; }
+.summary-row.is-drawer  { border-left-color: var(--color-primary, #ff3e8a); background: linear-gradient(90deg, #ffe0ec, var(--color-surface-soft)); }
+
+.summary-row .sum-this {
+  font-weight: 700;
+  color: var(--color-success, #4ade80);
+}
+
+.summary-row.is-wrong .sum-this {
+  color: var(--color-text-light);
+}
+
+.summary-row .sum-total {
+  font-weight: 900;
+  font-family: var(--font-display);
+  color: var(--color-primary);
 }
 
 .cizim-side {
@@ -1567,19 +1719,67 @@ input[type="text"]:focus {
   padding: 20px 24px;
   font-family: var(--font-body);
   font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--color-text);
+  font-weight: 700;
+  color: white;
   cursor: pointer;
   text-align: left;
-  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
-  box-shadow: var(--shadow-card);
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s, filter 0.2s;
+  box-shadow: 0 6px 0 rgba(0,0,0,0.25);
   display: flex;
   align-items: center;
   gap: 16px;
+  position: relative;
+  overflow: hidden;
 }
+
+/* Kahoot tarzı 4 farklı renkli kart */
+.trivia-option.opt-0 { background: linear-gradient(135deg, #ff3e8a, #ff6b9a); }
+.trivia-option.opt-1 { background: linear-gradient(135deg, #00d4ff, #4fe5ff); color: var(--color-text); }
+.trivia-option.opt-2 { background: linear-gradient(135deg, #ffd93d, #ffe97a); color: var(--color-text); }
+.trivia-option.opt-3 { background: linear-gradient(135deg, #a86bff, #c294ff); }
 
 .trivia-option:not(:disabled):hover {
   transform: translateY(-4px);
+  filter: brightness(1.08) saturate(1.15);
+  box-shadow: 0 10px 0 rgba(0,0,0,0.25);
+}
+
+.trivia-option:not(:disabled):active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 rgba(0,0,0,0.25);
+}
+
+.trivia-option.eliminated {
+  background: #e5e5e5 !important;
+  color: #999 !important;
+  opacity: 0.5;
+  text-decoration: line-through;
+  transform: none !important;
+}
+
+/* 50:50 joker butonu */
+.btn-fifty {
+  background: linear-gradient(135deg, var(--color-accent-3, #a86bff), #c294ff) !important;
+  color: white !important;
+  font-weight: 900 !important;
+  padding: 6px 16px !important;
+  border-radius: 999px !important;
+  box-shadow: 0 3px 0 rgba(0,0,0,0.2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-fifty:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-fifty span {
+  background: rgba(0,0,0,0.25);
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.85em;
 }
 
 .trivia-option:disabled {
@@ -1598,15 +1798,16 @@ input[type="text"]:focus {
   flex-shrink: 0;
 }
 
-.trivia-option:nth-child(1) .letter { background: var(--color-primary); }
-.trivia-option:nth-child(2) .letter { background: var(--color-secondary); color: var(--color-text); }
-.trivia-option:nth-child(3) .letter { background: var(--color-accent-2); }
-.trivia-option:nth-child(4) .letter { background: var(--color-accent-3); }
-
-.trivia-option:nth-child(1):not(:disabled):hover { border-color: var(--color-primary); }
-.trivia-option:nth-child(2):not(:disabled):hover { border-color: var(--color-secondary); }
-.trivia-option:nth-child(3):not(:disabled):hover { border-color: var(--color-accent-2); }
-.trivia-option:nth-child(4):not(:disabled):hover { border-color: var(--color-accent-3); }
+/* Kart üzerindeki harf rozeti — Kahoot tarzı renkli zaten kartın üzerinde */
+.trivia-option .letter {
+  background: rgba(0,0,0,0.22);
+  color: white !important;
+}
+.trivia-option.opt-1 .letter,
+.trivia-option.opt-2 .letter {
+  background: rgba(0,0,0,0.18);
+  color: var(--color-text) !important;
+}
 
 .trivia-option.selected {
   border-color: var(--color-primary) !important;

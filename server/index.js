@@ -762,22 +762,30 @@ const Cizim = {
   start(room) {
     const settings = room.settings?.cizim || { roundTime: 75, totalRounds: 3 };
     room.players.forEach(p => { p.score = 0; p.eliminated = false; });
+    room.cizimSecret = { currentWord: null, wordChoices: null };
     room.gameState = {
       type: 'cizim',
       drawerIndex: 0,
-      currentWord: null,
       wordHint: null,
+      hintLevel: 0,
+      maxHintLevel: 2,
       timeLeft: settings.roundTime,
       roundTime: settings.roundTime,
+      wordSelectTime: 0,
+      wordSelectMax: 15,
       timerId: null,
       strokes: [],
       guesses: [],
       correctGuessers: [],
+      firstGuesserId: null,
+      roundPoints: {},
       roundsPlayed: 0,
       totalRounds: room.players.length * settings.totalRounds,
       gameOver: false,
       winner: null,
-      phase: 'drawing'
+      phase: 'wordSelect',
+      revealedWord: null,    // tur sonu özetinde gösterilecek
+      lastSummary: null
     };
     this.startRound(room);
   },
@@ -786,24 +794,74 @@ const Cizim = {
     const state = room.gameState;
     if (state.timerId) clearInterval(state.timerId);
 
-    // Rastgele kelime seç (zorluk dağılımı: %50 kolay, %35 orta, %15 zor)
-    const r = Math.random();
-    let pool;
-    if (r < 0.5) pool = WORDS.kolay;
-    else if (r < 0.85) pool = WORDS.orta;
-    else pool = WORDS.zor;
-    state.currentWord = pool[Math.floor(Math.random() * pool.length)];
-    state.wordHint = this.generateHint(state.currentWord);
+    const drawer = room.players[state.drawerIndex];
+    // 2 farklı kelime seçeneği — zorluk dağılımı
+    const picks = [];
+    for (let i = 0; i < 2; i++) {
+      const r = Math.random();
+      let pool;
+      if (r < 0.5) pool = WORDS.kolay;
+      else if (r < 0.85) pool = WORDS.orta;
+      else pool = WORDS.zor;
+      let w;
+      let tries = 0;
+      do {
+        w = pool[Math.floor(Math.random() * pool.length)];
+        tries++;
+      } while (picks.includes(w) && tries < 10);
+      picks.push(w);
+    }
+    room.cizimSecret.wordChoices = picks;
+    room.cizimSecret.currentWord = null;
 
-    state.timeLeft = state.roundTime;
+    state.phase = 'wordSelect';
+    state.wordSelectTime = state.wordSelectMax;
+    state.wordHint = null;
+    state.hintLevel = 0;
     state.strokes = [];
     state.guesses = [];
     state.correctGuessers = [];
-    state.phase = 'drawing';
+    state.firstGuesserId = null;
+    state.roundPoints = {};
+    state.revealedWord = null;
+    state.lastSummary = null;
+    for (const p of room.players) state.roundPoints[p.id] = 0;
 
-    // Sadece çizen oyuncuya gerçek kelimeyi gönder
+    // Sadece çizene seçenekleri yolla (3 saniye sonra otomatik seç sürecek)
+    io.to(drawer.id).emit('cizim:wordChoices', { words: picks });
+
+    state.timerId = setInterval(() => {
+      state.wordSelectTime--;
+      io.to(room.code).emit('cizim:selectTimer', { timeLeft: state.wordSelectTime });
+      if (state.wordSelectTime <= 0) {
+        clearInterval(state.timerId);
+        // Otomatik ilk kelimeyi seç
+        this.selectWord(room, drawer.id, 0);
+      }
+    }, 1000);
+
+    broadcastRoom(room.code);
+  },
+
+  selectWord(room, playerId, index) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'wordSelect') return;
     const drawer = room.players[state.drawerIndex];
-    io.to(drawer.id).emit('cizim:word', { word: state.currentWord });
+    if (!drawer || drawer.id !== playerId) return;
+    const choices = room.cizimSecret?.wordChoices;
+    if (!choices) return;
+
+    if (state.timerId) clearInterval(state.timerId);
+
+    const safeIdx = (index === 1) ? 1 : 0;
+    const chosen = choices[safeIdx] || choices[0];
+    room.cizimSecret.currentWord = chosen;
+    room.cizimSecret.wordChoices = null;
+
+    state.phase = 'drawing';
+    state.timeLeft = state.roundTime;
+
+    io.to(drawer.id).emit('cizim:word', { word: chosen });
 
     state.timerId = setInterval(() => {
       state.timeLeft--;
@@ -816,9 +874,36 @@ const Cizim = {
     broadcastRoom(room.code);
   },
 
-  generateHint(word) {
-    // "elma" → "_ _ _ _"  (boşluklar olduğu gibi kalır)
-    return word.split('').map(c => c === ' ' ? ' ' : '_').join(' ');
+  // level 1: harf sayısı, level 2: baş harf + sayı
+  generateHint(word, level) {
+    if (!word || level <= 0) return null;
+    return word.split('').map((c, i) => {
+      if (c === ' ') return ' ';
+      if (level >= 2 && i === 0) return c.toLocaleUpperCase('tr-TR');
+      return '_';
+    }).join(' ');
+  },
+
+  revealHint(room, playerId) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'drawing') return;
+    const drawer = room.players[state.drawerIndex];
+    if (!drawer || drawer.id !== playerId) return;
+
+    if (state.hintLevel >= state.maxHintLevel) {
+      io.to(playerId).emit('cizim:hintError', { message: 'Daha fazla ipucu yok!' });
+      return;
+    }
+
+    state.hintLevel++;
+    const word = room.cizimSecret?.currentWord;
+    state.wordHint = this.generateHint(word, state.hintLevel);
+
+    io.to(room.code).emit('cizim:hintRevealed', {
+      level: state.hintLevel,
+      hint: state.wordHint
+    });
+    broadcastRoom(room.code);
   },
 
   draw(room, playerId, stroke) {
@@ -826,9 +911,7 @@ const Cizim = {
     if (!state || state.phase !== 'drawing') return;
     const drawer = room.players[state.drawerIndex];
     if (!drawer || drawer.id !== playerId) return;
-
     state.strokes.push(stroke);
-    // Tüm odaya yeni çizim noktasını yolla (sadece delta, performans için)
     io.to(room.code).emit('cizim:stroke', stroke);
   },
 
@@ -841,52 +924,69 @@ const Cizim = {
     io.to(room.code).emit('cizim:clear');
   },
 
+  undo(room, playerId) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'drawing') return;
+    const drawer = room.players[state.drawerIndex];
+    if (!drawer || drawer.id !== playerId) return;
+    if (state.strokes.length > 0) state.strokes.pop();
+    // Tüm istemciler kendi tuvallerini yeniden çizmeli — strokes listesi yollanır
+    io.to(room.code).emit('cizim:undo', { strokes: state.strokes });
+  },
+
   guess(room, playerId, text) {
     const state = room.gameState;
     if (!state || state.phase !== 'drawing') return;
     const player = room.players.find(p => p.id === playerId);
     if (!player) return;
 
-    // Çizen tahmin yapamaz
     const drawer = room.players[state.drawerIndex];
     if (drawer.id === playerId) return;
-
-    // Zaten doğru bildiyse spam'i engelle
     if (state.correctGuessers.includes(playerId)) return;
 
     text = text.trim();
     if (!text || text.length > 30) return;
 
     const normalized = text.toLocaleLowerCase('tr-TR').trim();
-    const target = state.currentWord.toLocaleLowerCase('tr-TR').trim();
+    const target = (room.cizimSecret?.currentWord || '').toLocaleLowerCase('tr-TR').trim();
 
     if (normalized === target) {
-      // Doğru tahmin!
       state.correctGuessers.push(playerId);
-      // Puan: kalan süreye göre 5-15 arası
-      const points = 5 + Math.floor((state.timeLeft / state.roundTime) * 10);
-      player.score += points;
-      // Çizen de puan alır (her doğru tahmin için 5)
-      drawer.score += 5;
+      const isFirst = state.firstGuesserId === null;
+      if (isFirst) state.firstGuesserId = playerId;
 
-      state.guesses.push({ 
-        player: player.name, 
-        text: `✅ ${player.name} doğru bildi! (+${points})`, 
-        correct: true 
+      // Puan hesaplama (skribbl.io tarzı, ölçeklenmiş)
+      const timeRatio = Math.max(0, state.timeLeft / state.roundTime);
+      const base = 4 + Math.round(16 * timeRatio); // 4-20
+      const hintMul = [1.0, 0.7, 0.5][state.hintLevel] ?? 0.5;
+      const firstBonus = isFirst ? 3 : 0;
+      const guesserPoints = Math.max(1, Math.round(base * hintMul) + firstBonus);
+
+      // Çizen her doğru tahminden: 0 ipucu=3, 1=1, 2=1 (ipucu cezası)
+      const drawerPerGuess = Math.max(1, 3 - 2 * state.hintLevel);
+
+      player.score += guesserPoints;
+      drawer.score += drawerPerGuess;
+      state.roundPoints[player.id] = (state.roundPoints[player.id] || 0) + guesserPoints;
+      state.roundPoints[drawer.id] = (state.roundPoints[drawer.id] || 0) + drawerPerGuess;
+
+      state.guesses.push({
+        player: player.name,
+        text: `✅ ${player.name} bildi! (+${guesserPoints})`,
+        correct: true
       });
-
-      // Mesajları sınırla
       if (state.guesses.length > 20) state.guesses.shift();
 
-      // Herkes bildiyse turu erken bitir
       const nonDrawerCount = room.players.length - 1;
       if (state.correctGuessers.length >= nonDrawerCount) {
+        // Herkes bildi: çizene +5 ek bonus
+        drawer.score += 5;
+        state.roundPoints[drawer.id] = (state.roundPoints[drawer.id] || 0) + 5;
         this.endRound(room);
         return;
       }
       broadcastRoom(room.code);
     } else {
-      // Yanlış tahmin - sohbet mesajı olarak göster
       state.guesses.push({ player: player.name, text, correct: false });
       if (state.guesses.length > 20) state.guesses.shift();
       broadcastRoom(room.code);
@@ -899,10 +999,22 @@ const Cizim = {
     state.phase = 'roundEnd';
     state.roundsPlayed++;
 
-    // Tüm odaya doğru kelimeyi göster
-    io.to(room.code).emit('cizim:reveal', { word: state.currentWord });
+    const revealedWord = room.cizimSecret?.currentWord || '???';
+    state.revealedWord = revealedWord;
 
-    // 5 saniye sonra yeni tur
+    const drawerId = room.players[state.drawerIndex].id;
+    const summary = room.players.map(p => ({
+      id: p.id,
+      name: p.name,
+      total: p.score,
+      thisRound: state.roundPoints[p.id] || 0,
+      guessed: state.correctGuessers.includes(p.id),
+      wasDrawer: p.id === drawerId
+    }));
+    state.lastSummary = summary;
+
+    io.to(room.code).emit('cizim:reveal', { word: revealedWord, summary });
+
     setTimeout(() => {
       if (!rooms[room.code] || rooms[room.code].game !== 'cizim') return;
       if (state.roundsPlayed >= state.totalRounds) {
@@ -915,7 +1027,7 @@ const Cizim = {
         state.drawerIndex = (state.drawerIndex + 1) % room.players.length;
         this.startRound(room);
       }
-    }, 5000);
+    }, 6000);
 
     broadcastRoom(room.code);
   },
@@ -924,6 +1036,7 @@ const Cizim = {
     if (room.gameState && room.gameState.timerId) {
       clearInterval(room.gameState.timerId);
     }
+    if (room.cizimSecret) delete room.cizimSecret;
   }
 };
 
@@ -935,12 +1048,19 @@ const Trivia = {
   TOTAL_QUESTIONS: 10,
 
   start(room) {
-    const settings = room.settings?.trivia || { questionTime: 15, totalQuestions: 10 };
+    const settings = room.settings?.trivia || { questionTime: 15, totalQuestions: 10, streak: true, fiftyJoker: true };
     room.players.forEach(p => { p.score = 0; p.eliminated = false; });
 
     // Rastgele soru seç
     const shuffled = [...TRIVIA_QUESTIONS].sort(() => Math.random() - 0.5);
     const selected = shuffled.slice(0, settings.totalQuestions);
+
+    const streaks = {};
+    const fiftyLeft = {};
+    for (const p of room.players) {
+      streaks[p.id] = 0;
+      fiftyLeft[p.id] = (settings.fiftyJoker !== false) ? 1 : 0;
+    }
 
     room.gameState = {
       type: 'trivia',
@@ -954,9 +1074,48 @@ const Trivia = {
       phase: 'question',
       lastAnswers: null,
       gameOver: false,
-      winner: null
+      winner: null,
+      // YENI:
+      streaks,
+      streakEnabled: settings.streak !== false,
+      fiftyLeft,
+      fiftyJokerEnabled: settings.fiftyJoker !== false,
+      fiftyEliminated: {} // per question: { playerId: [idx1, idx2] }
     };
     this.startQuestion(room);
+  },
+
+  useFiftyJoker(room, playerId) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'question') return;
+    if (!state.fiftyJokerEnabled) return;
+    if ((state.fiftyLeft[playerId] || 0) <= 0) {
+      io.to(playerId).emit('trivia:jokerError', { message: 'Joker hakkın kalmadı!' });
+      return;
+    }
+    if (state.fiftyEliminated[playerId]) {
+      io.to(playerId).emit('trivia:jokerError', { message: 'Bu soru için zaten kullandın!' });
+      return;
+    }
+    if (state.answers[playerId] !== undefined) {
+      io.to(playerId).emit('trivia:jokerError', { message: 'Zaten cevap verdin!' });
+      return;
+    }
+
+    const q = state.questions[state.currentIndex];
+    // Doğru olmayan 3 şıkkı tespit et, 2 tanesini rastgele seç
+    const wrongs = [0, 1, 2, 3].filter(i => i !== q.correct);
+    const shuffled = wrongs.sort(() => Math.random() - 0.5);
+    const eliminated = shuffled.slice(0, 2);
+
+    state.fiftyLeft[playerId]--;
+    state.fiftyEliminated[playerId] = eliminated;
+
+    io.to(playerId).emit('trivia:fiftyResult', {
+      eliminated,
+      jokersLeft: state.fiftyLeft[playerId]
+    });
+    broadcastRoom(room.code);
   },
 
   startQuestion(room) {
@@ -975,6 +1134,7 @@ const Trivia = {
     state.answers = {};
     state.phase = 'question';
     state.lastAnswers = null;
+    state.fiftyEliminated = {}; // her soru başında sıfırla
 
     state.timerId = setInterval(() => {
       state.timeLeft--;
@@ -1020,18 +1180,31 @@ const Trivia = {
       const ans = state.answers[player.id];
       let correct = false;
       let points = 0;
+      let streakBonus = 0;
       if (ans && ans.answerIndex === q.correct) {
         correct = true;
         const timeFactor = 1 - (ans.timeUsed / state.questionTime);
         points = 50 + Math.round(50 * timeFactor);
+        // Streak bonusu (2'inciden itibaren artar, max +10)
+        if (state.streakEnabled) {
+          state.streaks[player.id] = (state.streaks[player.id] || 0) + 1;
+          if (state.streaks[player.id] >= 2) {
+            streakBonus = Math.min(state.streaks[player.id] - 1, 10);
+          }
+          points += streakBonus;
+        }
         player.score += points;
+      } else {
+        if (state.streakEnabled) state.streaks[player.id] = 0;
       }
       results.push({
         playerId: player.id,
         playerName: player.name,
         answerIndex: ans ? ans.answerIndex : -1,
         correct,
-        points
+        points,
+        streakBonus,
+        streak: state.streaks[player.id] || 0
       });
     });
 
@@ -2004,7 +2177,9 @@ const DEFAULT_SETTINGS = {
   },
   trivia: {
     questionTime: 15,
-    totalQuestions: 10
+    totalQuestions: 10,
+    streak: true,         // streak bonus aç/kapa
+    fiftyJoker: true      // 50:50 joker aç/kapa
   },
   vampir: {
     discussionTime: 60,
@@ -2112,7 +2287,12 @@ io.on('connection', (socket) => {
         theme: { values: ['karisik', 'hayvan', 'yemek', 'spor', 'meyve'] }
       },
       cizim: { roundTime: [30, 180], totalRounds: [1, 5] },
-      trivia: { questionTime: [5, 30], totalQuestions: [5, 30] },
+      trivia: {
+        questionTime: [5, 30],
+        totalQuestions: [5, 30],
+        streak: 'bool',
+        fiftyJoker: 'bool'
+      },
       vampir: {
         discussionTime: [20, 180],
         voteTime: [10, 60],
@@ -2252,6 +2432,30 @@ io.on('connection', (socket) => {
   });
 
   // --- Çizim-Tahmin: Tahmin gönder ---
+  socket.on('cizim:selectWord', ({ index }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room } = result;
+    if (room.game !== 'cizim') return;
+    Cizim.selectWord(room, socket.id, index);
+  });
+
+  socket.on('cizim:revealHint', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room } = result;
+    if (room.game !== 'cizim') return;
+    Cizim.revealHint(room, socket.id);
+  });
+
+  socket.on('cizim:undo', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room } = result;
+    if (room.game !== 'cizim') return;
+    Cizim.undo(room, socket.id);
+  });
+
   socket.on('cizim:guess', ({ text }) => {
     const result = findPlayerRoom(socket.id);
     if (!result) return;
@@ -2267,6 +2471,15 @@ io.on('connection', (socket) => {
     const { room } = result;
     if (room.game !== 'trivia') return;
     Trivia.submitAnswer(room, socket.id, answerIndex);
+  });
+
+  // --- Trivia: 50:50 Joker ---
+  socket.on('trivia:useFifty', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room } = result;
+    if (room.game !== 'trivia') return;
+    Trivia.useFiftyJoker(room, socket.id);
   });
 
   // --- VAMPİR KÖYLÜ ---

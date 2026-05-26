@@ -601,10 +601,12 @@ const cizimCtx = cizimCanvas.getContext('2d');
 const cizimState = {
   drawing: false,
   color: '#1a0b2e',
-  lineWidth: 4,
+  brushSize: 6,
+  lineWidth: 6,
   lastX: 0,
   lastY: 0,
-  secretWord: null // sadece çizen oyuncu için
+  secretWord: null, // sadece çizen oyuncu için
+  isEraser: false
 };
 
 // Canvas boyutunu CSS'e göre ayarla (yüksek DPI desteği)
@@ -703,7 +705,18 @@ document.querySelectorAll('.tool-btn[data-color]').forEach(btn => {
     document.querySelectorAll('.tool-btn[data-color]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     cizimState.color = btn.dataset.color;
-    cizimState.lineWidth = btn.classList.contains('eraser') ? 20 : 4;
+    cizimState.isEraser = btn.classList.contains('eraser');
+    cizimState.lineWidth = cizimState.isEraser ? Math.max(20, cizimState.brushSize * 3) : cizimState.brushSize;
+  });
+});
+
+// Fırça boyutu
+document.querySelectorAll('.tool-btn[data-brush]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tool-btn[data-brush]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    cizimState.brushSize = parseInt(btn.dataset.brush) || 6;
+    cizimState.lineWidth = cizimState.isEraser ? Math.max(20, cizimState.brushSize * 3) : cizimState.brushSize;
   });
 });
 
@@ -712,6 +725,27 @@ document.getElementById('cizim-clear').addEventListener('click', () => {
   if (!isCurrentDrawer()) return;
   socket.emit('cizim:clear');
   clearCanvas();
+});
+
+// Geri al
+document.getElementById('cizim-undo').addEventListener('click', () => {
+  if (!isCurrentDrawer()) return;
+  socket.emit('cizim:undo');
+});
+
+// İpucu aç
+document.getElementById('cizim-hint').addEventListener('click', () => {
+  if (!isCurrentDrawer()) return;
+  socket.emit('cizim:revealHint');
+});
+
+// Kelime seçimi (çizen tarafında)
+document.querySelectorAll('.word-choice-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const idx = parseInt(btn.dataset.index) || 0;
+    socket.emit('cizim:selectWord', { index: idx });
+    document.getElementById('cizim-word-select').style.display = 'none';
+  });
 });
 
 // Tahmin gönder
@@ -739,24 +773,58 @@ function renderCizim() {
   const isDrawer = drawer && drawer.id === state.you?.id;
 
   document.getElementById('cizim-drawer-name').textContent = drawer ? drawer.name : '-';
-  document.getElementById('cizim-round').textContent = 
+  document.getElementById('cizim-round').textContent =
     `${gs.roundsPlayed + 1}/${gs.totalRounds}`;
-  document.getElementById('cizim-timer').textContent = gs.timeLeft;
+  document.getElementById('cizim-timer').textContent = (gs.phase === 'wordSelect') ? (gs.wordSelectTime || 0) : gs.timeLeft;
 
-  // Kelime gösterimi: çizen oyuncuya gerçek kelime, diğerlerine boşluk
-  const wordEl = document.getElementById('cizim-word');
-  if (isDrawer && cizimState.secretWord) {
-    wordEl.textContent = cizimState.secretWord.toUpperCase();
-    wordEl.style.color = 'var(--color-primary)';
+  // Kelime seçimi modali
+  const selectModal = document.getElementById('cizim-word-select');
+  if (gs.phase === 'wordSelect') {
+    if (isDrawer) {
+      // Çizen için seçim modal'ı; sözcükler cizim:wordChoices event ile gelir
+      // Sadece görünmüyorsa açma — wordChoices event handler açar
+    } else {
+      selectModal.style.display = 'none';
+    }
   } else {
-    wordEl.textContent = gs.wordHint || '_';
-    wordEl.style.color = 'var(--color-secondary-dark)';
+    selectModal.style.display = 'none';
   }
 
-  // Araç çubuğu sadece çizen için
-  document.getElementById('cizim-tools').style.display = isDrawer ? 'flex' : 'none';
-  
-  // Tahmin alanı sadece çizmeyen için
+  // Kelime gösterimi: çizen oyuncuya gerçek kelime, diğerlerine ipucu varsa, yoksa boş
+  const wordEl = document.getElementById('cizim-word');
+  if (gs.phase === 'wordSelect') {
+    wordEl.textContent = '...';
+    wordEl.style.color = 'var(--color-text-light)';
+  } else if (isDrawer && cizimState.secretWord) {
+    wordEl.textContent = cizimState.secretWord.toUpperCase();
+    wordEl.style.color = 'var(--color-primary)';
+  } else if (gs.wordHint) {
+    wordEl.textContent = gs.wordHint;
+    wordEl.style.color = 'var(--color-secondary-dark, #006ea3)';
+  } else {
+    // Henüz ipucu yok - tahmin etmek için sadece çizimi izle
+    wordEl.textContent = '🤐 gizli';
+    wordEl.style.color = 'var(--color-text-light, #6b7280)';
+  }
+
+  // Araç çubuğu sadece çizen için ve çizim fazında
+  const tools = document.getElementById('cizim-tools');
+  tools.style.display = (isDrawer && gs.phase === 'drawing') ? 'flex' : 'none';
+
+  // İpucu butonu durumu
+  const hintBtn = document.getElementById('cizim-hint');
+  if (hintBtn) {
+    if ((gs.hintLevel || 0) >= (gs.maxHintLevel || 2)) {
+      hintBtn.disabled = true;
+      hintBtn.textContent = '💡 İpucu (bitti)';
+    } else {
+      hintBtn.disabled = false;
+      const nextLabel = (gs.hintLevel === 0) ? '#1 Harf sayısı (-30% puan)' : '#2 Baş harf (-50% puan)';
+      hintBtn.textContent = `💡 ${nextLabel}`;
+    }
+  }
+
+  // Tahmin alanı sadece çizmeyen ve drawing fazında
   const guessWrap = document.getElementById('cizim-guess-wrap');
   if (isDrawer || gs.phase !== 'drawing') {
     guessWrap.classList.add('disabled');
@@ -783,10 +851,23 @@ function renderCizim() {
 
   renderScoreboard('cizim-scoreboard', gs.drawerIndex);
 
-  // Reveal ekranı (tur sonu)
+  // Reveal ekranı (tur sonu) — ara skor özetli
   const revealEl = document.getElementById('cizim-reveal');
   if (gs.phase === 'roundEnd' && !gs.gameOver) {
-    document.getElementById('cizim-reveal-word').textContent = gs.currentWord || '?';
+    document.getElementById('cizim-reveal-word').textContent = gs.revealedWord || gs.currentWord || '?';
+    const summaryEl = document.getElementById('cizim-reveal-summary');
+    if (summaryEl && gs.lastSummary) {
+      const sorted = [...gs.lastSummary].sort((a, b) => b.total - a.total);
+      summaryEl.innerHTML = sorted.map(s => `
+        <div class="summary-row ${s.wasDrawer ? 'is-drawer' : (s.guessed ? 'is-correct' : 'is-wrong')}">
+          <span class="sum-name">${s.wasDrawer ? '🎨 ' : (s.guessed ? '✅ ' : '❌ ')}${escapeHtml(s.name)}</span>
+          <span class="sum-this">+${s.thisRound}</span>
+          <span class="sum-total">${s.total}</span>
+        </div>
+      `).join('');
+    } else if (summaryEl) {
+      summaryEl.innerHTML = '';
+    }
     revealEl.style.display = 'flex';
   } else {
     revealEl.style.display = 'none';
@@ -810,6 +891,11 @@ document.getElementById('trivia-exit').addEventListener('click', exitGame);
 document.getElementById('trivia-back-lobby').addEventListener('click', exitGame);
 
 let triviaSelected = -1; // bu sorudaki seçim
+let triviaFiftyEliminated = []; // 50:50 ile elenen şık index'leri (bu soru)
+
+document.getElementById('trivia-fifty').addEventListener('click', () => {
+  socket.emit('trivia:useFifty');
+});
 
 function renderTrivia() {
   const gs = state.gameState;
@@ -847,7 +933,11 @@ function renderTrivia() {
           btn.classList.add('wrong');
         }
       } else if (gs.phase === 'question') {
-        if (triviaSelected === i) {
+        // 50:50 ile elenen şık
+        if (triviaFiftyEliminated.includes(i)) {
+          btn.classList.add('eliminated');
+          btn.disabled = true;
+        } else if (triviaSelected === i) {
           btn.classList.add('selected');
           btn.disabled = true;
         } else if (triviaSelected !== -1) {
@@ -859,11 +949,25 @@ function renderTrivia() {
             renderTrivia();
           });
         }
+        // Kahoot tarzı renkli kart
+        btn.classList.add(`opt-${i}`);
       } else {
         btn.disabled = true;
       }
       opts.appendChild(btn);
     });
+  }
+
+  // 50:50 buton durumu
+  const fiftyBtn = document.getElementById('trivia-fifty');
+  const fiftyCount = document.getElementById('trivia-fifty-count');
+  const myFifty = (gs.fiftyLeft && state.you) ? (gs.fiftyLeft[state.you.id] || 0) : 0;
+  const usedThisQ = (gs.fiftyEliminated && state.you) ? !!gs.fiftyEliminated[state.you.id] : false;
+  if (fiftyCount) fiftyCount.textContent = myFifty;
+  if (fiftyBtn) {
+    const canUse = gs.phase === 'question' && triviaSelected === -1 && myFifty > 0 && !usedThisQ;
+    fiftyBtn.disabled = !canUse;
+    fiftyBtn.style.display = (gs.fiftyJokerEnabled !== false) ? '' : 'none';
   }
 
   // Durum mesajı
@@ -883,8 +987,16 @@ function renderTrivia() {
     } else {
       status.textContent = '⏰ Cevap vermedin';
     }
-    // Yeni soru için seçimi sıfırla
-    setTimeout(() => { triviaSelected = -1; }, 100);
+    // Yeni soru için seçimleri sıfırla
+    setTimeout(() => {
+      triviaSelected = -1;
+      triviaFiftyEliminated = [];
+    }, 100);
+    // Streak bilgisi
+    const myResult2 = gs.lastAnswers?.results.find(r => r.playerId === state.you?.id);
+    if (myResult2 && myResult2.streakBonus > 0) {
+      showToast(`🔥 ${myResult2.streak}\'li streak! +${myResult2.streakBonus} bonus`, '');
+    }
   }
 
   renderScoreboard('trivia-scoreboard', -1);
@@ -1934,7 +2046,45 @@ socket.on('cizim:reveal', ({ word }) => {
   setTimeout(() => {
     clearCanvas();
     cizimState.secretWord = null;
-  }, 5000);
+  }, 5500);
+});
+
+// Kelime seçim seçenekleri (sadece çizene)
+socket.on('cizim:wordChoices', ({ words }) => {
+  const modal = document.getElementById('cizim-word-select');
+  if (!modal || !words || words.length < 2) return;
+  document.getElementById('cizim-word-0').textContent = words[0];
+  document.getElementById('cizim-word-1').textContent = words[1];
+  modal.style.display = 'flex';
+});
+
+socket.on('cizim:selectTimer', ({ timeLeft }) => {
+  if (state.gameState) state.gameState.wordSelectTime = timeLeft;
+  const el = document.getElementById('cizim-select-timer');
+  if (el) el.textContent = timeLeft;
+  const topTimer = document.getElementById('cizim-timer');
+  if (topTimer && state.gameState?.phase === 'wordSelect') topTimer.textContent = timeLeft;
+});
+
+socket.on('cizim:undo', ({ strokes }) => {
+  // Tüm istemciler canvas'ı sıfırlayıp stroke listesini yeniden çizer
+  clearCanvas();
+  if (Array.isArray(strokes)) {
+    strokes.forEach(s => drawStroke(s));
+  }
+});
+
+socket.on('cizim:hintRevealed', ({ level, hint }) => {
+  if (state.gameState) {
+    state.gameState.hintLevel = level;
+    state.gameState.wordHint = hint;
+  }
+  renderCizim();
+  showToast(`💡 İpucu açıldı (seviye ${level})`, '');
+});
+
+socket.on('cizim:hintError', ({ message }) => {
+  showToast(message, 'error');
 });
 
 // --- TRIVIA ---
@@ -1949,6 +2099,16 @@ socket.on('trivia:answerCount', ({ count, total }) => {
     const status = document.getElementById('trivia-status');
     if (status) status.textContent = `✓ Cevap verildi (${count}/${total} kişi cevapladı)`;
   }
+});
+
+socket.on('trivia:fiftyResult', ({ eliminated }) => {
+  triviaFiftyEliminated = eliminated || [];
+  renderTrivia();
+  showToast('50:50 kullanıldı — 2 yanlış şık elendi', '');
+});
+
+socket.on('trivia:jokerError', ({ message }) => {
+  showToast(message, 'error');
 });
 
 // --- VAMPİR KÖYLÜ ---

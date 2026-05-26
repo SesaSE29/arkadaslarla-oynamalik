@@ -274,7 +274,15 @@
             <button class="tool-btn" data-color="#ff5757" title="Kırmızı" style="background:#ff5757"></button>
             <button class="tool-btn" data-color="#a86bff" title="Mor" style="background:#a86bff"></button>
             <button class="tool-btn eraser" data-color="#ffffff" title="Silgi">🩹</button>
+            <div class="tool-divider"></div>
+            <button class="tool-btn brush-btn" data-brush="3" title="İnce">·</button>
+            <button class="tool-btn brush-btn active" data-brush="6" title="Orta">•</button>
+            <button class="tool-btn brush-btn" data-brush="12" title="Kalın">●</button>
+            <div class="tool-divider"></div>
+            <button class="tool-btn undo-btn" id="cizim-undo" title="Geri Al">↶</button>
             <button class="tool-btn clear-btn" id="cizim-clear" title="Tümünü Temizle">🗑️</button>
+            <div class="tool-divider"></div>
+            <button class="tool-btn hint-btn" id="cizim-hint" title="İpucu Aç (puanı düşürür)">💡 İpucu</button>
           </div>
         </div>
 
@@ -289,10 +297,24 @@
 
       <div class="scoreboard" id="cizim-scoreboard"></div>
 
+      <!-- Kelime seçim modali -->
+      <div class="cizim-word-select" id="cizim-word-select" style="display:none">
+        <div class="word-select-card">
+          <h3>🎨 Kelimeni Seç!</h3>
+          <p class="select-hint">Süre: <span id="cizim-select-timer">15</span>sn</p>
+          <div class="word-choices">
+            <button class="word-choice-btn" data-index="0" id="cizim-word-0">-</button>
+            <button class="word-choice-btn" data-index="1" id="cizim-word-1">-</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tur sonu özeti (ara skor) -->
       <div class="cizim-reveal" id="cizim-reveal" style="display:none">
         <div class="reveal-card">
           <p class="reveal-label">Doğru cevap:</p>
           <h3 id="cizim-reveal-word">-</h3>
+          <div class="reveal-summary" id="cizim-reveal-summary"></div>
           <p class="reveal-hint">Yeni tur başlıyor...</p>
         </div>
       </div>
@@ -319,6 +341,9 @@
         <div class="timer-circle small">
           <span id="trivia-timer">15</span>
         </div>
+        <button class="btn btn-secondary btn-sm btn-fifty" id="trivia-fifty" title="2 yanlış şıkkı eler">
+          50:50 <span id="trivia-fifty-count">1</span>
+        </button>
       </div>
 
       <div class="trivia-question-card">
@@ -660,6 +685,18 @@
           <div class="setting-row">
             <label>Toplam soru: <span class="setting-value" id="set-trivia-totalQuestions-val">10</span></label>
             <input type="range" id="set-trivia-totalQuestions" min="5" max="30" value="10" data-game="trivia" data-key="totalQuestions"/>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-trivia-streak" data-game="trivia" data-key="streak" checked/>
+              Streak bonusu (üst üste doğru bilene +1, +2, +3...)
+            </label>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-trivia-fiftyJoker" data-game="trivia" data-key="fiftyJoker" checked/>
+              50:50 Joker (oyuncu başına 1 hak, 2 yanlış şıkkı eler)
+            </label>
           </div>
         </div>
 
