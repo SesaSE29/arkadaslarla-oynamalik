@@ -812,6 +812,39 @@ input[type="text"]:focus {
   font-weight: 700;
 }
 
+/* Harf Değiş butonu */
+.btn-change-letter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, var(--color-accent-3, #a86bff), #c294ff);
+  color: white;
+}
+
+.btn-change-letter:hover:not(:disabled) {
+  filter: brightness(1.1);
+  transform: translateY(-2px);
+}
+
+.btn-change-letter:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-change-letter .pass-count {
+  background: rgba(0,0,0,0.22);
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.85em;
+  font-weight: 700;
+}
+
+/* Geçmiş entry — harf değiş özel stili */
+.kelime-history .entry.is-pass span.word,
+.kelime-history .entry[class*="letterChange"] span.word {
+  font-style: italic;
+}
+
 /* Kelime skor pill — canlı + pas göstergesi */
 .kelime-pill {
   display: flex;
@@ -833,11 +866,27 @@ input[type="text"]:focus {
   filter: grayscale(0.7);
 }
 
-.kelime-pill .pass-info {
+.kelime-pill .pass-info,
+.kelime-pill .tool-info {
   font-size: 0.75rem;
   background: rgba(0,0,0,0.08);
   padding: 1px 8px;
   border-radius: 999px;
+}
+
+.kelime-pill .tools {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.kelime-pill .elim-tag {
+  font-size: 0.7rem;
+  background: rgba(220,38,38,0.15);
+  color: #b91c1c;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 /* Ayarlar — select dropdown */
@@ -915,24 +964,80 @@ input[type="text"]:focus {
 /* ============================================================
    EKRAN 4: HAFIZA OYUNU
    ============================================================ */
-#screen-hafiza .hafiza-board {
-  background: var(--color-surface);
-  border-radius: var(--radius-lg);
-  padding: 28px;
-  box-shadow: var(--shadow-card);
-  margin-bottom: 20px;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
+/* Hafıza üst bilgi paneli */
+.hafiza-status {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 18px;
 }
 
-@media (min-width: 600px) {
+.hafiza-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--color-surface);
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-weight: 700;
+  box-shadow: var(--shadow-card);
+}
+
+.hafiza-progress .label {
+  font-size: 0.75rem;
+  color: var(--color-text-light, #6b7280);
+}
+
+.hafiza-theme-badge {
+  background: linear-gradient(135deg, var(--color-accent-3, #a86bff), #c294ff);
+  color: white;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-weight: 700;
+  box-shadow: 0 3px 0 rgba(0,0,0,0.18);
+  font-size: 0.9rem;
+}
+
+#screen-hafiza .hafiza-board {
+  background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(248,244,255,0.95));
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-card), inset 0 1px 0 rgba(255,255,255,0.6);
+  margin-bottom: 20px;
+  display: grid;
+  grid-template-columns: repeat(var(--hafiza-cols, 4), 1fr);
+  gap: 14px;
+  max-width: min(720px, 100%);
+  margin-left: auto;
+  margin-right: auto;
+  border: 3px solid rgba(168, 107, 255, 0.15);
+}
+
+@media (max-width: 500px) {
   #screen-hafiza .hafiza-board {
-    grid-template-columns: repeat(4, 1fr);
+    padding: 14px;
+    gap: 8px;
   }
+}
+
+/* Tema bazlı arka plan tonlamaları */
+.hafiza-board[data-theme="hayvan"] {
+  background: linear-gradient(135deg, #fff4e0, #ffe4c4);
+  border-color: #ff9f4a40;
+}
+.hafiza-board[data-theme="yemek"] {
+  background: linear-gradient(135deg, #ffe4e8, #ffd0d8);
+  border-color: #ff3e8a40;
+}
+.hafiza-board[data-theme="spor"] {
+  background: linear-gradient(135deg, #e0f7ff, #c4eeff);
+  border-color: #00d4ff40;
+}
+.hafiza-board[data-theme="meyve"] {
+  background: linear-gradient(135deg, #e8ffe0, #d0f4c4);
+  border-color: #4ade8040;
 }
 
 .memory-card {
@@ -940,7 +1045,7 @@ input[type="text"]:focus {
   background: transparent;
   border: none;
   cursor: pointer;
-  perspective: 1000px;
+  perspective: 1200px;
   padding: 0;
 }
 
@@ -949,7 +1054,7 @@ input[type="text"]:focus {
   height: 100%;
   position: relative;
   transform-style: preserve-3d;
-  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
   border-radius: var(--radius-md);
 }
 
@@ -966,36 +1071,108 @@ input[type="text"]:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(2rem, 6vw, 3rem);
-  box-shadow: 0 4px 0 rgba(0,0,0,0.15);
+  font-size: clamp(1.8rem, 5.5vw, 2.6rem);
+  box-shadow: 0 4px 0 rgba(0,0,0,0.18), 0 8px 16px rgba(0,0,0,0.08);
 }
 
+/* ÖN YÜZ — desenli, parlak, oyunsu */
 .memory-card .front {
-  background: linear-gradient(135deg, var(--color-primary), var(--color-accent-3));
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255,255,255,0.35) 0%, transparent 35%),
+    radial-gradient(circle at 70% 70%, rgba(255,255,255,0.15) 0%, transparent 40%),
+    linear-gradient(135deg, var(--color-primary, #ff3e8a), var(--color-accent-3, #a86bff));
   color: white;
   font-family: var(--font-display);
-  font-size: 1.5rem;
+  position: relative;
+  overflow: hidden;
 }
 
+.memory-card .front::before {
+  content: '';
+  position: absolute;
+  inset: 8%;
+  border: 2px dashed rgba(255,255,255,0.35);
+  border-radius: calc(var(--radius-md) - 6px);
+  pointer-events: none;
+}
+
+.memory-card .card-mark {
+  font-size: 2.4rem;
+  font-weight: 900;
+  text-shadow: 0 3px 0 rgba(0,0,0,0.25);
+  letter-spacing: -0.05em;
+  transform: rotate(-8deg);
+  animation: cardMarkFloat 3.2s ease-in-out infinite;
+}
+
+@keyframes cardMarkFloat {
+  0%, 100% { transform: rotate(-8deg) translateY(0); }
+  50% { transform: rotate(-3deg) translateY(-3px); }
+}
+
+/* ARKA YÜZ — emoji, beyaz parlak */
 .memory-card .back {
-  background: white;
-  border: 3px solid var(--color-accent-2);
+  background:
+    radial-gradient(circle at 50% 30%, rgba(255,255,255,1) 0%, #faf6ff 70%);
+  border: 3px solid var(--color-secondary, #00d4ff);
   transform: rotateY(180deg);
 }
 
+/* Tema bazlı arka yüz tonlamaları */
+.hafiza-board[data-theme="hayvan"] .memory-card .back { border-color: #ff9f4a; background: radial-gradient(circle at 50% 30%, #fff, #fff8eb); }
+.hafiza-board[data-theme="yemek"] .memory-card .back  { border-color: #ff3e8a; background: radial-gradient(circle at 50% 30%, #fff, #fff0f4); }
+.hafiza-board[data-theme="spor"] .memory-card .back   { border-color: #00d4ff; background: radial-gradient(circle at 50% 30%, #fff, #effaff); }
+.hafiza-board[data-theme="meyve"] .memory-card .back  { border-color: #4ade80; background: radial-gradient(circle at 50% 30%, #fff, #f0fdf2); }
+
+/* EŞLEŞEN KART — parıldama + nabız */
 .memory-card.matched .back {
-  background: linear-gradient(135deg, #d4ffd4, #b8f5b8);
-  border-color: var(--color-success);
-  animation: matched-bounce 0.5s ease;
+  background: linear-gradient(135deg, #d4ffd4, #a8f5a8);
+  border-color: var(--color-success, #4ade80);
+  animation: matched-pop 0.65s cubic-bezier(0.34, 1.8, 0.64, 1);
+  box-shadow:
+    0 4px 0 rgba(34,197,94,0.4),
+    0 0 20px rgba(74,222,128,0.6),
+    inset 0 0 0 2px rgba(255,255,255,0.4);
 }
 
-@keyframes matched-bounce {
-  0%, 100% { transform: rotateY(180deg) scale(1); }
-  50% { transform: rotateY(180deg) scale(1.15); }
+.memory-card.matched::after {
+  content: '✓';
+  position: absolute;
+  top: 4px; right: 6px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--color-success, #4ade80);
+  color: white;
+  font-size: 14px;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.25);
+  z-index: 2;
+  animation: checkPop 0.45s 0.2s backwards;
+}
+
+@keyframes checkPop {
+  from { transform: scale(0) rotate(-180deg); }
+  to   { transform: scale(1) rotate(0); }
+}
+
+@keyframes matched-pop {
+  0%   { transform: rotateY(180deg) scale(1); }
+  35%  { transform: rotateY(180deg) scale(1.18); }
+  60%  { transform: rotateY(180deg) scale(0.95); }
+  100% { transform: rotateY(180deg) scale(1); }
 }
 
 .memory-card:not(.flipped):not(.matched):hover .front {
-  filter: brightness(1.1);
+  filter: brightness(1.12) saturate(1.1);
+  transform: scale(1.04);
+  transition: transform 0.15s, filter 0.15s;
+}
+
+.memory-card:not(.flipped):not(.matched):active .front {
+  transform: scale(0.96);
 }
 
 /* ============================================================

@@ -181,6 +181,9 @@
           <button class="btn btn-secondary btn-pass" id="kelime-pass" title="Turunu pas geç">
             ⏭️ Pas <span class="pass-count" id="kelime-pass-count">0</span>
           </button>
+          <button class="btn btn-secondary btn-change-letter" id="kelime-change-letter" title="Sistem yeni harf atasın (sıra sende kalır)">
+            🔀 Harf Değiş <span class="pass-count" id="kelime-change-count">0</span>
+          </button>
         </div>
         <p class="kelime-error" id="kelime-error"></p>
 
@@ -194,7 +197,7 @@
       <div class="game-over" id="kelime-gameover" style="display:none">
         <div class="game-over-card">
           <h2>🏆 Oyun Bitti!</h2>
-          <p>Kazanan: <strong id="kelime-winner">-</strong></p>
+          <p>Son ayakta kalan: <strong id="kelime-winner">-</strong></p>
           <button class="btn btn-primary" id="kelime-back-lobby">Lobiye Dön</button>
         </div>
       </div>
@@ -212,9 +215,14 @@
           <span class="label">SIRA:</span>
           <span class="player-name" id="hafiza-current-player">-</span>
         </div>
+        <div class="hafiza-progress">
+          <span class="label">EŞLEŞEN:</span>
+          <span id="hafiza-progress-text">0 / 0</span>
+        </div>
+        <div class="hafiza-theme-badge" id="hafiza-theme-badge">🎨 Karışık</div>
       </div>
 
-      <div class="hafiza-board" id="hafiza-board"></div>
+      <div class="hafiza-board" id="hafiza-board" data-theme="karisik"></div>
 
       <div class="scoreboard" id="hafiza-scoreboard"></div>
 
@@ -580,6 +588,11 @@
             <span class="setting-info">Zorda kaldığında turu atlama hakkı</span>
           </div>
           <div class="setting-row">
+            <label>Harf değiş hakkı: <span class="setting-value" id="set-kelime-letterChangesPerPlayer-val">1</span> kez/oyuncu</label>
+            <input type="range" id="set-kelime-letterChangesPerPlayer" min="0" max="3" value="1" data-game="kelime" data-key="letterChangesPerPlayer"/>
+            <span class="setting-info">Sistem yeni bir sesli harf atar, sıra değişmez</span>
+          </div>
+          <div class="setting-row">
             <label>Kategori</label>
             <select id="set-kelime-category" data-game="kelime" data-key="category" class="settings-select">
               <option value="serbest">Serbest (her kelime)</option>
@@ -613,6 +626,16 @@
             <label>Kart çifti: <span class="setting-value" id="set-hafiza-pairCount-val">8</span> çift (=<span id="set-hafiza-cards">16</span> kart)</label>
             <input type="range" id="set-hafiza-pairCount" min="4" max="18" value="8" data-game="hafiza" data-key="pairCount"/>
             <span class="setting-info">Daha az = kolay, daha çok = zor</span>
+          </div>
+          <div class="setting-row">
+            <label>Tema seti</label>
+            <select id="set-hafiza-theme" data-game="hafiza" data-key="theme" class="settings-select">
+              <option value="karisik">🎨 Karışık (varsayılan)</option>
+              <option value="hayvan">🐾 Hayvanlar</option>
+              <option value="yemek">🍕 Yemekler</option>
+              <option value="spor">⚽ Spor</option>
+              <option value="meyve">🍎 Meyve & Sebze</option>
+            </select>
           </div>
         </div>
 

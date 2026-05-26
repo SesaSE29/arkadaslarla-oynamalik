@@ -312,6 +312,9 @@ document.getElementById('kelime-back-lobby').addEventListener('click', exitGame)
 document.getElementById('kelime-pass').addEventListener('click', () => {
   socket.emit('kelime:pass');
 });
+document.getElementById('kelime-change-letter').addEventListener('click', () => {
+  socket.emit('kelime:changeLetter');
+});
 
 // Mobil: input fokuslandığında ekrana kaydır (klavye altında kalmasın)
 document.getElementById('kelime-input').addEventListener('focus', () => {
@@ -407,6 +410,17 @@ function renderKelimeZinciri() {
     passBtn.style.display = (gs.maxPasses > 0) ? '' : 'none';
   }
 
+  // Harf Değiş butonu
+  const changeBtn = document.getElementById('kelime-change-letter');
+  const changeCountEl = document.getElementById('kelime-change-count');
+  const myChanges = (gs.letterChangesLeft && state.you) ? (gs.letterChangesLeft[state.you.id] || 0) : 0;
+  if (changeCountEl) changeCountEl.textContent = myChanges;
+  if (changeBtn) {
+    const canChange = isMyTurn && !gs.gameOver && myChanges > 0 && gs.lastLetter;
+    changeBtn.disabled = !canChange;
+    changeBtn.style.display = ((gs.maxLetterChanges || 0) > 0) ? '' : 'none';
+  }
+
   // Kelime geçmişi
   const history = document.getElementById('kelime-history');
   if (gs.messages.length === 0) {
@@ -439,6 +453,14 @@ function renderKelimeZinciri() {
 document.getElementById('hafiza-exit').addEventListener('click', exitGame);
 document.getElementById('hafiza-back-lobby').addEventListener('click', exitGame);
 
+const HAFIZA_THEME_LABELS = {
+  'karisik': '🎨 Karışık',
+  'hayvan':  '🐾 Hayvanlar',
+  'yemek':   '🍕 Yemekler',
+  'spor':    '⚽ Spor',
+  'meyve':   '🍎 Meyve & Sebze'
+};
+
 function renderHafiza() {
   const gs = state.gameState;
   if (!gs) return;
@@ -446,11 +468,29 @@ function renderHafiza() {
   const currentPlayer = state.players[gs.currentPlayerIndex];
   const isMyTurn = currentPlayer && currentPlayer.id === state.you?.id;
 
-  document.getElementById('hafiza-current-player').textContent = 
+  document.getElementById('hafiza-current-player').textContent =
     currentPlayer ? `${currentPlayer.name}${isMyTurn ? ' (SEN)' : ''}` : '-';
 
-  // Board
+  // Tema rozeti
+  const themeBadge = document.getElementById('hafiza-theme-badge');
+  if (themeBadge) themeBadge.textContent = HAFIZA_THEME_LABELS[gs.theme] || '🎨 Karışık';
+
+  // İlerleme
+  const matchedCount = gs.cards.filter(c => c.matched).length / 2;
+  const progressEl = document.getElementById('hafiza-progress-text');
+  if (progressEl) progressEl.textContent = `${matchedCount} / ${gs.pairCount}`;
+
+  // Board — auto-fit sütun sayısı
   const board = document.getElementById('hafiza-board');
+  if (gs.theme) board.dataset.theme = gs.theme;
+  const totalCards = gs.cards.length;
+  // 4 sütun (≤16 kart), 6 sütun (>16 kart), 8 sütun (>30 kart)
+  let cols = 4;
+  if (totalCards > 30) cols = 6;
+  else if (totalCards > 20) cols = 5;
+  else if (totalCards > 16) cols = 5;
+  board.style.setProperty('--hafiza-cols', cols);
+
   board.innerHTML = '';
   gs.cards.forEach((card, idx) => {
     const btn = document.createElement('button');
@@ -459,7 +499,9 @@ function renderHafiza() {
     if (card.matched) btn.classList.add('matched');
     btn.innerHTML = `
       <div class="inner">
-        <div class="face front">?</div>
+        <div class="face front">
+          <span class="card-mark">?</span>
+        </div>
         <div class="face back">${card.emoji}</div>
       </div>
     `;
@@ -505,7 +547,8 @@ function renderScoreboard(elementId, activeIndex) {
   });
 }
 
-// Kelime Zinciri için canlı skor tablosu (kalp ikonları + pas hakkı)
+// Kelime Zinciri için canlı skor tablosu (kalp ikonları + pas + harf değiş)
+// Not: Puan gösterilmiyor — kazanan = son ayakta kalan
 function renderKelimeScoreboard(gs) {
   const el = document.getElementById('kelime-scoreboard');
   el.innerHTML = '';
@@ -517,6 +560,7 @@ function renderKelimeScoreboard(gs) {
 
     const livesLeft = gs.lives ? (gs.lives[p.id] ?? 0) : 0;
     const passesLeft = gs.passesLeft ? (gs.passesLeft[p.id] ?? 0) : 0;
+    const changesLeft = gs.letterChangesLeft ? (gs.letterChangesLeft[p.id] ?? 0) : 0;
     const maxLives = gs.maxLives || 1;
 
     let hearts = '';
@@ -524,11 +568,15 @@ function renderKelimeScoreboard(gs) {
       hearts += `<span class="heart ${k < livesLeft ? 'filled' : 'empty'}">${k < livesLeft ? '❤️' : '🤍'}</span>`;
     }
 
+    const tools = [];
+    if (gs.maxPasses > 0) tools.push(`<span class="tool-info" title="Kalan pas">⏭️${passesLeft}</span>`);
+    if ((gs.maxLetterChanges || 0) > 0) tools.push(`<span class="tool-info" title="Kalan harf değiş">🔀${changesLeft}</span>`);
+
     pill.innerHTML = `
       <span class="name">${escapeHtml(p.name)}</span>
       <span class="lives" title="Kalan can">${hearts}</span>
-      ${gs.maxPasses > 0 ? `<span class="pass-info" title="Kalan pas">⏭️${passesLeft}</span>` : ''}
-      <span class="score">${p.score || 0}</span>
+      ${tools.length ? `<span class="tools">${tools.join('')}</span>` : ''}
+      ${p.eliminated ? `<span class="elim-tag">elendi</span>` : ''}
     `;
     el.appendChild(pill);
   });
@@ -1837,6 +1885,10 @@ socket.on('kelime:error', ({ message }) => {
 
 socket.on('kelime:skipped', ({ message }) => {
   showToast('↪ ' + message, '');
+});
+
+socket.on('kelime:letterChanged', ({ playerName, from, to }) => {
+  showToast(`🔀 ${playerName} harfi değiştirdi: ${from} → ${to}`, '');
 });
 
 socket.on('kelime:passUsed', ({ playerName }) => {

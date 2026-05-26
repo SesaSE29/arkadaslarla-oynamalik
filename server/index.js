@@ -226,6 +226,7 @@ const KelimeZinciri = {
     const s = room.settings?.kelime || {};
     const maxLives = Math.max(1, Math.min(5, s.lives || 1));
     const maxPasses = Math.max(0, Math.min(3, (s.passesPerPlayer ?? 1)));
+    const maxLetterChanges = Math.max(0, Math.min(3, (s.letterChangesPerPlayer ?? 1)));
     const category = (s.category && CATEGORY_LABELS[s.category]) ? s.category : 'serbest';
     const matchMode = (s.matchMode === 'kafiye') ? 'kafiye' : 'son-harf';
     const useDictionary = s.useDictionary !== false;
@@ -233,9 +234,11 @@ const KelimeZinciri = {
 
     const lives = {};
     const passesLeft = {};
+    const letterChangesLeft = {};
     for (const p of room.players) {
       lives[p.id] = maxLives;
       passesLeft[p.id] = maxPasses;
+      letterChangesLeft[p.id] = maxLetterChanges;
       p.score = 0;
       p.eliminated = false;
     }
@@ -257,6 +260,8 @@ const KelimeZinciri = {
       maxLives,
       passesLeft,
       maxPasses,
+      letterChangesLeft,
+      maxLetterChanges,
       category,
       categoryLabel: CATEGORY_LABELS[category] || 'Serbest',
       matchMode,
@@ -434,6 +439,69 @@ const KelimeZinciri = {
     broadcastRoom(room.code);
   },
 
+  changeLetter(room, playerId) {
+    const state = room.gameState;
+    if (!state || state.gameOver) return;
+    const currentPlayer = room.players[state.currentPlayerIndex];
+    if (!currentPlayer || currentPlayer.id !== playerId) return;
+
+    if ((state.letterChangesLeft[playerId] || 0) <= 0) {
+      io.to(playerId).emit('kelime:error', { message: 'Harf değiş hakkın kalmadı!' });
+      return;
+    }
+
+    // Mevcut harfle farklı, sözlükte/kategoride mevcut bir sesli harf seç
+    const vowels = ['a','e','i','o','u','ı','ö','ü'];
+    const currentLetter = state.lastLetter;
+    const oldDisplay = (state.matchMode === 'kafiye' && state.lastTwoLetters)
+      ? state.lastTwoLetters.toUpperCase()
+      : (currentLetter ? currentLetter.toUpperCase() : '?');
+
+    // Geçerli (oynanabilir) sesli harfleri filtrele
+    const tempState = { ...state, lastTwoLetters: null }; // kafiye etkisini kaldır
+    const playable = [];
+    for (const v of vowels) {
+      if (v === currentLetter) continue;
+      tempState.lastLetter = v;
+      if (!this.isDeadEnd(tempState)) playable.push(v);
+    }
+
+    let newLetter;
+    if (playable.length > 0) {
+      newLetter = playable[Math.floor(Math.random() * playable.length)];
+    } else {
+      // Hiç oynanabilir sesli yoksa: alternatif bul
+      newLetter = this.findAlternativeLetter(state) || vowels[Math.floor(Math.random() * vowels.length)];
+    }
+
+    state.letterChangesLeft[playerId]--;
+    state.lastLetter = newLetter;
+    state.lastTwoLetters = null; // kafiye modu sıfırlanır
+    state.skipNotice = null;
+
+    state.messages.push({
+      player: currentPlayer.name,
+      word: `🔀 Harf değişti: ${oldDisplay} → ${newLetter.toUpperCase()}`,
+      valid: false,
+      letterChange: true
+    });
+    if (state.messages.length > 15) state.messages.shift();
+
+    io.to(room.code).emit('kelime:letterChanged', {
+      playerId,
+      playerName: currentPlayer.name,
+      from: oldDisplay,
+      to: newLetter.toUpperCase(),
+      letterChangesLeft: state.letterChangesLeft[playerId]
+    });
+
+    // Sıra DEĞİŞMEZ — aynı oyuncu yeni harfle devam eder
+    // Süreyi sıfırla (yardım hakkı kullanıldı)
+    if (state.timerId) clearInterval(state.timerId);
+    this.startTurn(room);
+    broadcastRoom(room.code);
+  },
+
   loseLife(room, reason) {
     const state = room.gameState;
     const currentPlayer = room.players[state.currentPlayerIndex];
@@ -597,12 +665,20 @@ const KelimeZinciri = {
 // HAFIZA OYUNU
 // ============================================================
 const Hafiza = {
-  EMOJIS: ['🎮','🎲','🎯','🎨','🎭','🎪','🎸','🎺','🚀','⭐','🌈','🍕','🍔','🍩','🦄','🐉','🦊','🐼','🐶','🐱','🐰','🦁','🐸','🦋','🍎','🍌','🍇','🍉','🌺','🌻','🍄','⚽','🏀','🎁'],
+  THEMES: {
+    karisik: ['🎮','🎲','🎯','🎨','🎭','🎪','🎸','🎺','🚀','⭐','🌈','🍕','🍔','🍩','🦄','🐉','🦊','🐼','🐶','🐱','🐰','🦁','🐸','🦋','🍎','🍌','🍇','🍉','🌺','🌻','🍄','⚽','🏀','🎁'],
+    hayvan:  ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🦅','🦉','🦇','🐺','🐗','🦒','🦓','🐘','🦏','🐪','🐊','🐢','🐍','🦂','🦋','🐌','🐝'],
+    yemek:   ['🍕','🍔','🍟','🌭','🍿','🥓','🍳','🧇','🥞','🧀','🍰','🍪','🍩','🍫','🍭','🍦','🍓','🍒','🥑','🌮','🌯','🥗','🍜','🍣','🍱','🍙','🥟','🍤','🍢','🥨','🧋','☕','🥐','🥖'],
+    spor:    ['⚽','🏀','🏈','⚾','🎾','🏐','🏉','🎱','🏓','🏸','🥊','🥋','⛳','🏒','🏑','🥍','🎯','🎣','🎽','🛹','🛼','🛷','⛸️','🎿','⛷️','🏂','🤿','🏊','🚴','🧗','🤸','🤾','🤺','🏄'],
+    meyve:   ['🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌽','🥕','🧄','🧅','🥔','🍠','🌶️','🍄','🌰','🍯','🍞','🥨']
+  },
 
   start(room) {
-    const settings = room.settings?.hafiza || { pairCount: 8 };
-    const pairCount = Math.min(settings.pairCount, this.EMOJIS.length);
-    const selected = [...this.EMOJIS].sort(() => Math.random() - 0.5).slice(0, pairCount);
+    const settings = room.settings?.hafiza || { pairCount: 8, theme: 'karisik' };
+    const themeName = (settings.theme && this.THEMES[settings.theme]) ? settings.theme : 'karisik';
+    const themePool = this.THEMES[themeName];
+    const pairCount = Math.min(settings.pairCount, themePool.length);
+    const selected = [...themePool].sort(() => Math.random() - 0.5).slice(0, pairCount);
     const cards = [...selected, ...selected]
       .sort(() => Math.random() - 0.5)
       .map((emoji, i) => ({ id: i, emoji, flipped: false, matched: false }));
@@ -611,6 +687,7 @@ const Hafiza = {
       type: 'hafiza',
       cards,
       pairCount,
+      theme: themeName,
       currentPlayerIndex: 0,
       flippedIndices: [],
       lockBoard: false,
@@ -1908,16 +1985,18 @@ const UnoOyun = {
 // ============================================================
 const DEFAULT_SETTINGS = {
   kelime: {
-    turnTime: 20,            // saniye
-    minLength: 2,            // minimum kelime uzunluğu
-    lives: 1,                // oyuncu başına can (1-5)
-    passesPerPlayer: 1,      // oyuncu başına pas hakkı (0-3)
-    category: 'serbest',     // 'serbest'|'hayvan'|'bitki'|'esya'|'ulke'|'yemek'|'a-yok'
-    matchMode: 'son-harf',   // 'son-harf'|'kafiye'
-    useDictionary: true      // sözlük kontrolü (serbest modda)
+    turnTime: 20,                // saniye
+    minLength: 2,                // minimum kelime uzunluğu
+    lives: 1,                    // oyuncu başına can (1-5)
+    passesPerPlayer: 1,          // oyuncu başına pas hakkı (0-3)
+    letterChangesPerPlayer: 1,   // oyuncu başına harf değiş hakkı (0-3)
+    category: 'serbest',         // 'serbest'|'hayvan'|'bitki'|'esya'|'ulke'|'yemek'|'a-yok'
+    matchMode: 'son-harf',       // 'son-harf'|'kafiye'
+    useDictionary: true          // sözlük kontrolü (serbest modda)
   },
   hafiza: {
-    pairCount: 8       // 8 çift = 16 kart (6/8/10/12 olabilir)
+    pairCount: 8,      // 8 çift = 16 kart (4-18 olabilir)
+    theme: 'karisik'   // 'karisik'|'hayvan'|'yemek'|'spor'|'meyve'
   },
   cizim: {
     roundTime: 75,     // her tur saniye
@@ -2023,11 +2102,15 @@ io.on('connection', (socket) => {
         minLength: [2, 6],
         lives: [1, 5],
         passesPerPlayer: [0, 3],
+        letterChangesPerPlayer: [0, 3],
         category: { values: ['serbest', 'hayvan', 'bitki', 'esya', 'ulke', 'yemek', 'a-yok'] },
         matchMode: { values: ['son-harf', 'kafiye'] },
         useDictionary: 'bool'
       },
-      hafiza: { pairCount: [4, 18] },
+      hafiza: {
+        pairCount: [4, 18],
+        theme: { values: ['karisik', 'hayvan', 'yemek', 'spor', 'meyve'] }
+      },
       cizim: { roundTime: [30, 180], totalRounds: [1, 5] },
       trivia: { questionTime: [5, 30], totalQuestions: [5, 30] },
       vampir: {
@@ -2130,6 +2213,15 @@ io.on('connection', (socket) => {
     const { room } = result;
     if (room.game !== 'kelime-zinciri') return;
     KelimeZinciri.pass(room, socket.id);
+  });
+
+  // --- Kelime Zinciri: Harf değiş ---
+  socket.on('kelime:changeLetter', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room } = result;
+    if (room.game !== 'kelime-zinciri') return;
+    KelimeZinciri.changeLetter(room, socket.id);
   });
 
   // --- Hafıza: Kart çevir ---
