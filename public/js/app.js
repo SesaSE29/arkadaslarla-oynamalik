@@ -1793,20 +1793,46 @@ function updatePlacementVisuals() {
     const y = parseInt(cell.dataset.y);
     
     cell.className = 'amiral-cell';
-    
-    // Yerleşmiş gemi?
+
+    // Yerleşmiş gemi? — pos bilgisiyle göster
     for (const ship of amiralState.placedShips) {
-      if (ship.cells.some(c => c.x === x && c.y === y)) {
-        cell.classList.add('ship');
+      const cells = [...ship.cells].sort((a, b) => (a.y - b.y) || (a.x - b.x));
+      const idxInShip = cells.findIndex(c => c.x === x && c.y === y);
+      if (idxInShip >= 0) {
+        const orient = cells.every(c => c.y === cells[0].y) ? 'h' : 'v';
+        let pos = 'mid';
+        if (cells.length === 1) pos = 'single';
+        else if (idxInShip === 0) pos = 'head';
+        else if (idxInShip === cells.length - 1) pos = 'tail';
+        cell.classList.add('ship', `ship-${orient}`, `ship-${pos}`);
         break;
       }
     }
-    
+
     // Preview?
     if (previewCells.some(c => c.x === x && c.y === y)) {
       cell.classList.add(previewBad ? 'preview-bad' : 'preview');
     }
   }
+}
+
+// Gemi hücre haritası oluştur — her cell'in head/mid/tail + yön bilgisi
+function buildShipCellMap(board) {
+  const map = {};
+  if (!board || !board.ships) return map;
+  for (const ship of board.ships) {
+    if (!ship.cells || ship.cells.length === 0) continue;
+    const cells = [...ship.cells].sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    const orient = cells.every(c => c.y === cells[0].y) ? 'h' : 'v';
+    cells.forEach((c, i) => {
+      let pos = 'mid';
+      if (cells.length === 1) pos = 'single';
+      else if (i === 0) pos = 'head';
+      else if (i === cells.length - 1) pos = 'tail';
+      map[`${c.x},${c.y}`] = { pos, orient, sunk: !!ship.sunk, len: cells.length };
+    });
+  }
+  return map;
 }
 
 function renderAmiralBattle() {
@@ -1819,6 +1845,7 @@ function renderAmiralBattle() {
   const opponent = gs.players?.find(pid => pid !== myId);
   const myBoard = gs.boards?.[myId];
   const opponentBoard = gs.boards?.[opponent];
+  const lastMove = gs.lastMove;
 
   // Sıra durumu
   const turnInfo = document.getElementById('amiral-opponent-turn');
@@ -1843,58 +1870,87 @@ function renderAmiralBattle() {
   // Rakibin tahtası (atış yapacağım yer)
   const oppDiv = document.getElementById('amiral-opponent-board');
   oppDiv.innerHTML = '';
+  // Rakibin gemilerinden sadece batanları görebiliriz
+  const oppSunkShipMap = {};
+  if (opponentBoard && opponentBoard.ships) {
+    const sunkShips = opponentBoard.ships.filter(s => s.sunk);
+    for (const ship of sunkShips) {
+      const cells = [...ship.cells].sort((a, b) => (a.y - b.y) || (a.x - b.x));
+      const orient = cells.every(c => c.y === cells[0].y) ? 'h' : 'v';
+      cells.forEach((c, i) => {
+        let pos = 'mid';
+        if (cells.length === 1) pos = 'single';
+        else if (i === 0) pos = 'head';
+        else if (i === cells.length - 1) pos = 'tail';
+        oppSunkShipMap[`${c.x},${c.y}`] = { pos, orient, sunk: true };
+      });
+    }
+  }
   const myShots = myBoard?.shots || [];
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) {
       const cell = document.createElement('div');
       cell.className = 'amiral-cell';
+      cell.dataset.coord = `${'ABCDEFGH'[x]}${y + 1}`;
+
+      const shipInfo = oppSunkShipMap[`${x},${y}`];
+      if (shipInfo) {
+        cell.classList.add('ship', `ship-${shipInfo.orient}`, `ship-${shipInfo.pos}`, 'ship-sunk');
+      }
+
       const shot = myShots.find(s => s.x === x && s.y === y);
       if (shot) {
-        cell.textContent = shot.hit ? '🔥' : '·';
         cell.classList.add(shot.hit ? 'hit' : 'miss');
         cell.classList.add('disabled');
-        // Battı mı kontrolü
-        if (shot.hit && opponentBoard) {
-          const sunkShip = opponentBoard.ships.find(s => s.sunk && s.cells.some(c => c.x === x && c.y === y));
-          if (sunkShip) cell.classList.add('sunk');
-        }
+        cell.innerHTML = shot.hit ? '<span class="hit-mark">💥</span>' : '<span class="miss-mark">●</span>';
+        if (shot.hit && shipInfo?.sunk) cell.classList.add('sunk');
       } else if (isMyTurn && isParticipant) {
+        cell.classList.add('targetable');
         cell.addEventListener('click', () => {
           socket.emit('amiral:shoot', { x, y });
         });
       } else {
         cell.classList.add('disabled');
       }
+
+      // Son atış vurgusu (ben opp'a vurmuşsam)
+      if (lastMove && lastMove.shooter === myId && lastMove.x === x && lastMove.y === y) {
+        cell.classList.add('last-shot');
+      }
+
       oppDiv.appendChild(cell);
     }
   }
 
-  // Benim tahtam
+  // Benim tahtam (kendi gemilerimi görüyorum)
   const myDiv = document.getElementById('amiral-my-board');
   myDiv.innerHTML = '';
+  const myShipMap = buildShipCellMap(myBoard);
   const opponentShots = opponentBoard?.shots || [];
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) {
       const cell = document.createElement('div');
       cell.className = 'amiral-cell disabled';
-      // Gemim mi var burada?
-      let myShip = null;
-      if (myBoard) {
-        for (const ship of myBoard.ships) {
-          if (ship.cells.some(c => c.x === x && c.y === y)) {
-            myShip = ship;
-            break;
-          }
-        }
+      cell.dataset.coord = `${'ABCDEFGH'[x]}${y + 1}`;
+
+      const shipInfo = myShipMap[`${x},${y}`];
+      if (shipInfo) {
+        cell.classList.add('ship', `ship-${shipInfo.orient}`, `ship-${shipInfo.pos}`);
+        if (shipInfo.sunk) cell.classList.add('ship-sunk');
       }
-      if (myShip) cell.classList.add('ship');
-      // Bana atış olmuş mu?
+
       const shot = opponentShots.find(s => s.x === x && s.y === y);
       if (shot) {
-        cell.textContent = shot.hit ? '🔥' : '·';
+        cell.innerHTML = shot.hit ? '<span class="hit-mark">💥</span>' : '<span class="miss-mark">●</span>';
         cell.classList.add(shot.hit ? 'hit' : 'miss');
-        if (shot.hit && myShip?.sunk) cell.classList.add('sunk');
+        if (shot.hit && shipInfo?.sunk) cell.classList.add('sunk');
       }
+
+      // Son atış vurgusu (opp bana vurmuşsa)
+      if (lastMove && lastMove.shooter && lastMove.shooter !== myId && lastMove.x === x && lastMove.y === y) {
+        cell.classList.add('last-shot');
+      }
+
       myDiv.appendChild(cell);
     }
   }
@@ -2007,6 +2063,11 @@ document.getElementById('uno-deck').addEventListener('click', () => {
   socket.emit('uno:draw');
 });
 
+// UNO! butonu
+document.getElementById('uno-call-btn').addEventListener('click', () => {
+  socket.emit('uno:call');
+});
+
 // Renk seçici
 document.querySelectorAll('.picker-color').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -2034,9 +2095,23 @@ function unoCardCanPlay(card, gs) {
 
 function unoCardLabel(card) {
   const valueMap = {
-    '+2': '+2', '+4': '+4', 'donus': '↻', 'pas': '⊘', 'joker': '★'
+    '+2': '+2', '+4': '+4', 'donus': '⥃', 'pas': '⊘', 'joker': '★'
   };
-  return valueMap[card.value] || card.value;
+  return valueMap[card.value] || String(card.value);
+}
+
+// Orijinal Uno görünümlü kart HTML'i oluştur
+function buildUnoCardHTML(card, colorOverride) {
+  const color = colorOverride || card.color;
+  const label = unoCardLabel(card);
+  const isJoker = color === 'joker';
+  return `
+    <span class="corner tl">${label}</span>
+    <div class="oval">
+      <span class="big">${label}</span>
+    </div>
+    <span class="corner br">${label}</span>
+  `;
 }
 
 function renderUno() {
@@ -2055,29 +2130,62 @@ function renderUno() {
     colorDot.classList.add(gs.currentColor);
   }
 
-  // Oyuncu çubuğu (herkesin kart sayısı)
+  // Oyuncu çubuğu (herkesin kart sayısı + UNO yakala butonları)
   const playersBar = document.getElementById('uno-players-bar');
   playersBar.innerHTML = '';
+  const unoPending = gs.unoPending || {};
   state.players.forEach((p, i) => {
     const pill = document.createElement('div');
     pill.className = 'uno-player-pill';
     if (i === gs.currentPlayerIndex) pill.classList.add('active');
     const handCount = gs.hands?.[p.id]?.length || 0;
+    const pendingForThis = unoPending[p.id];
+
+    let trailing = '';
+    // 1 kart kaldıysa ve henüz "UNO" demediyse — yakalama hakkı
+    if (pendingForThis && !pendingForThis.called && !pendingForThis.caught && p.id !== state.you?.id) {
+      trailing = `<button class="btn-uno-catch" data-target="${p.id}">🪤 Yakala!</button>`;
+    } else if (pendingForThis && pendingForThis.called) {
+      trailing = `<span class="uno-called-tag">📢 UNO!</span>`;
+    }
+
     pill.innerHTML = `
       <span>${escapeHtml(p.name)}${p.id === state.you?.id ? ' (sen)' : ''}</span>
       <span class="card-count">${handCount}</span>
+      ${trailing}
     `;
     playersBar.appendChild(pill);
   });
+
+  // Yakala butonları
+  playersBar.querySelectorAll('.btn-uno-catch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      socket.emit('uno:catch', { targetId: btn.dataset.target });
+    });
+  });
+
+  // Kendi UNO butonu — 1 karta düşmüş ve henüz çağırmadıysam
+  const myPending = state.you ? unoPending[state.you.id] : null;
+  const callBtn = document.getElementById('uno-call-btn');
+  if (callBtn) {
+    const myHandCount = state.you ? (gs.hands?.[state.you.id]?.length || 0) : 0;
+    if (myHandCount === 1 && myPending && !myPending.called && !myPending.caught) {
+      callBtn.style.display = '';
+    } else {
+      callBtn.style.display = 'none';
+    }
+  }
 
   // Discard (en üstteki kart)
   const discardDiv = document.getElementById('uno-discard');
   discardDiv.innerHTML = '';
   if (gs.discard && gs.discard.length) {
     const top = gs.discard[gs.discard.length - 1];
+    const displayColor = (top.color === 'joker' && gs.currentColor && gs.currentColor !== 'joker') ? gs.currentColor : top.color;
     const card = document.createElement('div');
-    card.className = 'uno-card ' + (gs.currentColor || top.color);
-    card.textContent = unoCardLabel(top);
+    card.className = 'uno-card ' + displayColor;
+    if (top.value === '+4') card.dataset.value = '+4';
+    card.innerHTML = buildUnoCardHTML(top, displayColor);
     discardDiv.appendChild(card);
     const label = document.createElement('span');
     label.className = 'uno-deck-label';
@@ -2113,7 +2221,8 @@ function renderUno() {
   unoState.myHand.forEach((card, idx) => {
     const cardEl = document.createElement('div');
     cardEl.className = 'uno-card ' + card.color;
-    cardEl.textContent = unoCardLabel(card);
+    if (card.value === '+4') cardEl.dataset.value = '+4';
+    cardEl.innerHTML = buildUnoCardHTML(card);
     if (isMyTurn && unoCardCanPlay(card, gs)) {
       cardEl.classList.add('playable');
       cardEl.addEventListener('click', () => {

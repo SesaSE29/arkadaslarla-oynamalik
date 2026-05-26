@@ -494,7 +494,20 @@
           <button class="btn btn-ghost btn-sm" id="amiral-restart">⟲ Baştan Başla</button>
           <button class="btn btn-primary btn-sm" id="amiral-confirm" style="display:none">Hazırım!</button>
         </div>
-        <div class="amiral-board placement" id="amiral-placement-board"></div>
+        <div class="amiral-board-frame">
+          <div class="coord-row coord-top">
+            <span></span>
+            <span>A</span><span>B</span><span>C</span><span>D</span>
+            <span>E</span><span>F</span><span>G</span><span>H</span>
+          </div>
+          <div class="coord-body">
+            <div class="coord-col">
+              <span>1</span><span>2</span><span>3</span><span>4</span>
+              <span>5</span><span>6</span><span>7</span><span>8</span>
+            </div>
+            <div class="amiral-board placement" id="amiral-placement-board"></div>
+          </div>
+        </div>
         <p class="amiral-waiting" id="amiral-waiting" style="display:none">⏳ Rakibin yerleştirmesi bekleniyor...</p>
       </div>
 
@@ -504,12 +517,38 @@
           <div class="amiral-board-wrap">
             <h3>🎯 Rakibin Tahtası</h3>
             <p class="amiral-turn-info" id="amiral-opponent-turn">Sıra sende!</p>
-            <div class="amiral-board" id="amiral-opponent-board"></div>
+            <div class="amiral-board-frame">
+              <div class="coord-row coord-top">
+                <span></span>
+                <span>A</span><span>B</span><span>C</span><span>D</span>
+                <span>E</span><span>F</span><span>G</span><span>H</span>
+              </div>
+              <div class="coord-body">
+                <div class="coord-col">
+                  <span>1</span><span>2</span><span>3</span><span>4</span>
+                  <span>5</span><span>6</span><span>7</span><span>8</span>
+                </div>
+                <div class="amiral-board" id="amiral-opponent-board"></div>
+              </div>
+            </div>
           </div>
           <div class="amiral-board-wrap">
             <h3>⛵ Senin Tahtan</h3>
             <p class="amiral-ships-info" id="amiral-my-ships">5 gemi</p>
-            <div class="amiral-board" id="amiral-my-board"></div>
+            <div class="amiral-board-frame">
+              <div class="coord-row coord-top">
+                <span></span>
+                <span>A</span><span>B</span><span>C</span><span>D</span>
+                <span>E</span><span>F</span><span>G</span><span>H</span>
+              </div>
+              <div class="coord-body">
+                <div class="coord-col">
+                  <span>1</span><span>2</span><span>3</span><span>4</span>
+                  <span>5</span><span>6</span><span>7</span><span>8</span>
+                </div>
+                <div class="amiral-board" id="amiral-my-board"></div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="amiral-log" id="amiral-log"></div>
@@ -541,6 +580,7 @@
           <span class="label">RENK:</span>
           <span class="uno-color-dot" id="uno-color-dot"></span>
         </div>
+        <button class="btn btn-uno-call" id="uno-call-btn" style="display:none">📢 UNO!</button>
       </div>
 
       <div class="uno-main">

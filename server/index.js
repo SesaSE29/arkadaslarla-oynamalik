@@ -2263,6 +2263,26 @@ const UnoOyun = {
       return;
     }
 
+    // UNO! çağrı sistemi: 1 kart kaldıysa 5 sn pencere
+    if (hand.length === 1) {
+      state.unoPending = state.unoPending || {};
+      state.unoPending[playerId] = {
+        playerId,
+        startTime: Date.now(),
+        called: false
+      };
+      // 5 sn sonra hâlâ çağrılmadıysa pencere otomatik kapanır (yakalama hakkı kalmaz)
+      const pendingRef = state.unoPending[playerId];
+      setTimeout(() => {
+        if (!rooms[room.code] || rooms[room.code].game !== 'uno') return;
+        const curr = rooms[room.code].gameState?.unoPending?.[playerId];
+        if (curr === pendingRef && !curr.called && !curr.caught) {
+          delete rooms[room.code].gameState.unoPending[playerId];
+          broadcastRoom(room.code);
+        }
+      }, 5000);
+    }
+
     // Özel kartlar
     let skipNext = false;
     if (card.value === 'pas') {
@@ -2325,6 +2345,55 @@ const UnoOyun = {
     // Eli yolla ve sıra geç
     io.to(playerId).emit('uno:hand', { cards: hand });
     this.advanceTurn(room, false);
+    broadcastRoom(room.code);
+  },
+
+  // Oyuncu UNO! der — 5sn penceresinde çağrı
+  callUno(room, playerId) {
+    const state = room.gameState;
+    if (!state || state.gameOver) return;
+    const pending = state.unoPending?.[playerId];
+    if (!pending) return;
+    pending.called = true;
+    const player = room.players.find(p => p.id === playerId);
+    if (player) {
+      state.log.unshift(`📢 ${player.name} "UNO!" dedi`);
+      if (state.log.length > 8) state.log.pop();
+    }
+    io.to(room.code).emit('uno:called', { playerId, playerName: player?.name });
+    broadcastRoom(room.code);
+  },
+
+  // Başka oyuncu "yakaladı" — UNO demeden 1 karta düşen oyuncuya +2
+  catchUno(room, catcherId, targetId) {
+    const state = room.gameState;
+    if (!state || state.gameOver) return;
+    const pending = state.unoPending?.[targetId];
+    if (!pending) return;
+    if (pending.called || pending.caught) return;
+    if (catcherId === targetId) return; // kendine yakalama yok
+
+    pending.caught = true;
+    const target = room.players.find(p => p.id === targetId);
+    const catcher = room.players.find(p => p.id === catcherId);
+    if (!target) return;
+
+    // +2 ceza
+    const hand = state.hands[targetId];
+    for (let i = 0; i < 2; i++) {
+      if (state.deck.length === 0) {
+        const last = state.discard.pop();
+        state.deck = state.discard.sort(() => Math.random() - 0.5);
+        state.discard = [last];
+      }
+      if (state.deck.length > 0) hand.push(state.deck.pop());
+    }
+    io.to(targetId).emit('uno:hand', { cards: hand });
+
+    state.log.unshift(`🪤 ${catcher?.name} ${target.name}'i yakaladı! +2 ceza`);
+    if (state.log.length > 8) state.log.pop();
+    delete state.unoPending[targetId];
+    io.to(room.code).emit('uno:caught', { targetId, targetName: target.name, catcherName: catcher?.name });
     broadcastRoom(room.code);
   },
 
@@ -2754,6 +2823,18 @@ io.on('connection', (socket) => {
     const result = findPlayerRoom(socket.id);
     if (!result || result.room.game !== 'uno') return;
     UnoOyun.playCard(result.room, socket.id, cardIndex, pickColor);
+  });
+
+  socket.on('uno:call', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'uno') return;
+    UnoOyun.callUno(result.room, socket.id);
+  });
+
+  socket.on('uno:catch', ({ targetId }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'uno') return;
+    UnoOyun.catchUno(result.room, socket.id, targetId);
   });
 
   socket.on('uno:draw', () => {
