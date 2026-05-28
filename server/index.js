@@ -64,6 +64,16 @@ const io = new Server(server, {
 // Statik dosyaları sun (HTML, CSS, JS)
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+// Keep-alive endpoint — Render.com 15dk uyku önleme için
+app.get('/ping', (req, res) => {
+  res.status(200).json({
+    ok: true,
+    uptime: Math.floor(process.uptime()),
+    rooms: Object.keys(rooms).length,
+    ts: Date.now()
+  });
+});
+
 // ============================================================
 // ODA YÖNETİMİ
 // ============================================================
@@ -130,22 +140,25 @@ function broadcastRoom(roomCode) {
           name: op.name,
           score: op.score,
           alive: op.alive,
-          eliminated: op.eliminated
+          eliminated: op.eliminated,
+          ready: op.ready
         })),
         game: room.game,
         gameState: personalState,
-        settings: room.settings
+        settings: room.settings,
+        lobbyChat: room.lobbyChat || []
       });
     });
     return;
   }
   
-  const playersBase = room.players.map(p => ({ 
-    id: p.id, 
-    name: p.name, 
+  const playersBase = room.players.map(p => ({
+    id: p.id,
+    name: p.name,
     score: p.score,
     alive: p.alive,
-    eliminated: p.eliminated
+    eliminated: p.eliminated,
+    ready: p.ready
     // role aşağıda kişiye göre eklenir
   }));
 
@@ -170,7 +183,8 @@ function broadcastRoom(roomCode) {
         players: personalPlayers,
         game: room.game,
         gameState: cleanState,
-        settings: room.settings
+        settings: room.settings,
+        lobbyChat: room.lobbyChat || []
       });
     });
   } else {
@@ -185,7 +199,8 @@ function broadcastRoom(roomCode) {
       players: playersWithRoles,
       game: room.game,
       gameState: cleanState,
-      settings: room.settings
+      settings: room.settings,
+      lobbyChat: room.lobbyChat || []
     });
   }
 }
@@ -1639,6 +1654,11 @@ const Vampir = {
         message: `${target.name} koruma iksiriyle kurtarıldı. (${potions.protect} koruma kaldı)`
       });
     } else if (type === 'kill') {
+      // Cadı kendine kill iksiri kullanamaz
+      if (targetId === playerId) {
+        io.to(playerId).emit('vampir:actionConfirm', { message: 'Kendine öldürme iksiri kullanamazsın!' });
+        return;
+      }
       state.nightActions.witchKill = targetId;
       potions.kill--;
       io.to(playerId).emit('vampir:actionConfirm', {
@@ -2478,17 +2498,21 @@ io.on('connection', (socket) => {
   console.log('Bağlandı:', socket.id);
 
   // --- Oda Oluştur ---
-  socket.on('room:create', ({ name }) => {
+  socket.on('room:create', ({ name, password }) => {
     name = (name || '').trim().slice(0, 20) || 'Oyuncu';
+    password = (password || '').toString().slice(0, 20);
     const code = generateRoomCode();
-    const player = { id: socket.id, name, score: 0, eliminated: false };
+    const player = { id: socket.id, name, score: 0, eliminated: false, ready: false };
     rooms[code] = {
       code,
       host: socket.id,
       players: [player],
       game: null,
       gameState: null,
-      settings: cloneSettings()
+      settings: cloneSettings(),
+      lobbyChat: [],
+      password: password || null,
+      hasPassword: !!password
     };
     socket.join(code);
     socket.emit('room:joined', { code, you: { id: socket.id, name } });
@@ -2496,13 +2520,25 @@ io.on('connection', (socket) => {
   });
 
   // --- Odaya Katıl ---
-  socket.on('room:join', ({ code, name }) => {
+  socket.on('room:join', ({ code, name, password }) => {
     code = (code || '').toUpperCase().trim();
     name = (name || '').trim().slice(0, 20) || 'Oyuncu';
+    password = (password || '').toString();
     const room = rooms[code];
     if (!room) {
       socket.emit('room:error', { message: 'Oda bulunamadı!' });
       return;
+    }
+    // Şifre kontrolü
+    if (room.password) {
+      if (!password) {
+        socket.emit('room:passwordRequired', { code });
+        return;
+      }
+      if (password !== room.password) {
+        socket.emit('room:error', { message: 'Şifre yanlış!' });
+        return;
+      }
     }
     if (room.players.length >= 12) {
       socket.emit('room:error', { message: 'Oda dolu! (max 12 oyuncu)' });
@@ -2512,11 +2548,53 @@ io.on('connection', (socket) => {
       socket.emit('room:error', { message: 'Oyun başlamış, bekleyin.' });
       return;
     }
-    const player = { id: socket.id, name, score: 0, eliminated: false };
+    const player = { id: socket.id, name, score: 0, eliminated: false, ready: false };
     room.players.push(player);
     socket.join(code);
     socket.emit('room:joined', { code, you: { id: socket.id, name } });
     broadcastRoom(code);
+  });
+
+
+  // --- Hazır toggle ---
+  socket.on('room:toggleReady', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room, player } = result;
+    player.ready = !player.ready;
+    broadcastRoom(room.code);
+  });
+
+  // --- Lobi sohbeti ---
+  socket.on('lobby:chat', ({ text }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room, player } = result;
+    text = (text || '').toString().trim().slice(0, 200);
+    if (!text) return;
+    room.lobbyChat = room.lobbyChat || [];
+    room.lobbyChat.push({
+      playerId: player.id,
+      name: player.name,
+      text,
+      ts: Date.now()
+    });
+    if (room.lobbyChat.length > 50) room.lobbyChat.shift();
+    broadcastRoom(room.code);
+  });
+
+  // --- Hızlı tepki emoji ---
+  socket.on('room:reaction', ({ emoji }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room, player } = result;
+    const VALID = ['😄','🔥','👏','❤️','😱'];
+    if (!VALID.includes(emoji)) return;
+    io.to(room.code).emit('room:reaction', {
+      playerId: player.id,
+      playerName: player.name,
+      emoji
+    });
   });
 
   // --- Odadan Ayrıl ---
@@ -2595,6 +2673,48 @@ io.on('connection', (socket) => {
   });
 
   // --- Oyun Başlat (sadece host) ---
+  function _launchGame(room, gameType, socket) {
+    // Geri sayım — tüm istemcilere bildir, 3sn sonra oyunu başlat
+    io.to(room.code).emit('game:countdown', { gameType, duration: 3 });
+    setTimeout(() => {
+      // Oda hâlâ var mı?
+      if (!rooms[room.code]) return;
+      // Yeterli oyuncu var mı? (disconnect olmuş olabilir)
+      if (room.players.length < 2) {
+        io.to(room.code).emit('room:error', { message: 'Yetersiz oyuncu, oyun iptal edildi.' });
+        room.game = null;
+        broadcastRoom(room.code);
+        return;
+      }
+      room.game = gameType;
+      if (gameType === 'kelime-zinciri') {
+        KelimeZinciri.start(room);
+      } else if (gameType === 'hafiza') {
+        Hafiza.start(room);
+      } else if (gameType === 'cizim') {
+        Cizim.start(room);
+      } else if (gameType === 'trivia') {
+        Trivia.start(room);
+      } else if (gameType === 'vampir') {
+        const ok = Vampir.start(room);
+        if (!ok) { room.game = null; broadcastRoom(room.code); return; }
+      } else if (gameType === 'yilan') {
+        const ok = Yilan.start(room);
+        if (!ok) { room.game = null; broadcastRoom(room.code); return; }
+      } else if (gameType === 'amiral') {
+        if (room.players.length < 2) {
+          if (socket) socket.emit('room:error', { message: 'Amiral Battı 2 oyuncu gerektirir!' });
+          room.game = null;
+          return;
+        }
+        AmiralBatti.start(room);
+      } else if (gameType === 'uno') {
+        const ok = UnoOyun.start(room);
+        if (!ok) { room.game = null; broadcastRoom(room.code); return; }
+      }
+    }, 3500);
+  }
+
   socket.on('game:start', ({ gameType }) => {
     const result = findPlayerRoom(socket.id);
     if (!result) return;
@@ -2607,33 +2727,24 @@ io.on('connection', (socket) => {
       socket.emit('room:error', { message: 'En az 2 oyuncu lazım!' });
       return;
     }
+    _launchGame(room, gameType, socket);
+  });
 
-    room.game = gameType;
-    if (gameType === 'kelime-zinciri') {
-      KelimeZinciri.start(room);
-    } else if (gameType === 'hafiza') {
-      Hafiza.start(room);
-    } else if (gameType === 'cizim') {
-      Cizim.start(room);
-    } else if (gameType === 'trivia') {
-      Trivia.start(room);
-    } else if (gameType === 'vampir') {
-      const ok = Vampir.start(room);
-      if (!ok) { room.game = null; broadcastRoom(room.code); return; }
-    } else if (gameType === 'yilan') {
-      const ok = Yilan.start(room);
-      if (!ok) { room.game = null; broadcastRoom(room.code); return; }
-    } else if (gameType === 'amiral') {
-      if (room.players.length < 2) {
-        socket.emit('room:error', { message: 'Amiral Battı 2 oyuncu gerektirir!' });
-        room.game = null;
-        return;
-      }
-      AmiralBatti.start(room);
-    } else if (gameType === 'uno') {
-      const ok = UnoOyun.start(room);
-      if (!ok) { room.game = null; broadcastRoom(room.code); return; }
+  // Aynı oyunu tekrar başlat (host)
+  socket.on('game:replay', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { room } = result;
+    if (room.host !== socket.id) {
+      socket.emit('room:error', { message: 'Sadece oda kurucusu tekrar başlatabilir!' });
+      return;
     }
+    if (!room.game) return;
+    const gameType = room.game;
+    stopGame(room);
+    room.gameState = null;
+    room.players.forEach(p => { p.score = 0; p.eliminated = false; p.alive = true; p.role = null; });
+    _launchGame(room, gameType, socket);
   });
 
   // --- Oyundan Çık (lobiye dön) ---
@@ -2889,3 +3000,21 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🎮 Arkadaşlarla Oynamalık çalışıyor: http://localhost:${PORT}`);
 });
+
+// Keep-alive: KEEP_ALIVE_URL env değişkeni ayarlıysa kendine ping atar (Render free tier uyku önleme)
+// Render dashboard → Environment → KEEP_ALIVE_URL = https://senin-uygulamanin-adi.onrender.com/ping
+const KEEP_ALIVE_URL = process.env.KEEP_ALIVE_URL;
+if (KEEP_ALIVE_URL) {
+  const INTERVAL_MIN = 10;
+  console.log(`🔄 Keep-alive aktif: ${KEEP_ALIVE_URL} (her ${INTERVAL_MIN}dk)`);
+  setInterval(() => {
+    try {
+      const fetchFn = (typeof fetch !== 'undefined') ? fetch : null;
+      if (fetchFn) {
+        fetchFn(KEEP_ALIVE_URL).catch(e => console.warn('Keep-alive fetch hatası:', e.message));
+      }
+    } catch (e) {
+      console.warn('Keep-alive error:', e.message);
+    }
+  }, INTERVAL_MIN * 60 * 1000);
+}

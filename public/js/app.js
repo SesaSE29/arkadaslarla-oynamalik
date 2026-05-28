@@ -23,6 +23,48 @@ function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = document.getElementById(id);
   if (el) el.classList.add('active');
+  // Reaction barı: sadece oyun ekranlarında (home/lobby hariç)
+  const reactionBar = document.getElementById('reaction-bar');
+  if (reactionBar) {
+    const inGame = id && id !== 'screen-home' && id !== 'screen-lobby';
+    reactionBar.style.display = inGame ? 'flex' : 'none';
+  }
+}
+
+// ============================================================
+// AVATAR SİSTEMİ — hayvan emoji + renk (isim hash'inden)
+// ============================================================
+const AVATAR_ANIMALS = [
+  '🦁','🐯','🐶','🐱','🦊','🐻','🐼','🐨','🐰','🐭','🐹','🐮','🐷','🐸',
+  '🐵','🐔','🐧','🦅','🦉','🦇','🐺','🐗','🦒','🦓','🐘','🦏','🐪','🐊',
+  '🐢','🐍','🦋','🐝','🦄','🐙','🦈','🐳','🐬','🦀','🦐','🦔'
+];
+const AVATAR_COLORS = [
+  '#ff3e8a', '#00d4ff', '#ffd93d', '#6bcf7f', '#a86bff',
+  '#ff9f4a', '#4ade80', '#f472b6', '#fb923c', '#60a5fa',
+  '#facc15', '#34d399'
+];
+
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function avatarFor(player) {
+  // playerId varsa o, yoksa name'den hash; oturum boyu kalıcı
+  const seed = (player.id || '') + '|' + (player.name || '?');
+  const h = hashStr(seed);
+  return {
+    emoji: AVATAR_ANIMALS[h % AVATAR_ANIMALS.length],
+    color: AVATAR_COLORS[(h >> 4) % AVATAR_COLORS.length]
+  };
+}
+
+function avatarHTML(player, size = 'md') {
+  const a = avatarFor(player);
+  const pid = player.id || '';
+  return `<span class="avatar avatar-${size}" data-player-id="${pid}" style="background:${a.color}">${a.emoji}</span>`;
 }
 
 // ============================================================
@@ -42,28 +84,730 @@ function showToast(message, type = '') {
 // ============================================================
 // GİRİŞ EKRANI
 // ============================================================
-document.getElementById('btn-create').addEventListener('click', () => {
-  const name = document.getElementById('create-name').value.trim();
-  if (!name) {
-    showToast('Bir ad gir!', 'error');
+const PREFS_KEY = 'aoynamalik_prefs';
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; }
+}
+function savePrefs(patch) {
+  const p = loadPrefs();
+  Object.assign(p, patch);
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch {}
+}
+
+// Rastgele TR isim üreteci
+const RANDOM_ADJ = ['Cesur', 'Hızlı', 'Akıllı', 'Zarif', 'Şaşkın', 'Kurnaz', 'Mutlu', 'Asi', 'Sevimli', 'Vahşi', 'Çılgın', 'Süper', 'Mega', 'Mistik', 'Efsane', 'Gizli', 'Şanslı', 'Yaramaz', 'Kahraman', 'Bilge'];
+const RANDOM_NOUN = ['Kaplan', 'Aslan', 'Kartal', 'Kurt', 'Tilki', 'Ayı', 'Panda', 'Yunus', 'Şahin', 'Penguen', 'Kelebek', 'Geyik', 'Vaşak', 'Baykuş', 'Ahtapot', 'Yılan', 'Köpekbalığı', 'Bukalemun', 'Maymun', 'Su Aygırı'];
+function randomName() {
+  return RANDOM_ADJ[Math.floor(Math.random() * RANDOM_ADJ.length)]
+    + ' ' + RANDOM_NOUN[Math.floor(Math.random() * RANDOM_NOUN.length)];
+}
+
+// Sayfa açılışında son ismi inputlara koy
+(function initSavedName() {
+  const prefs = loadPrefs();
+  if (prefs.name) {
+    const c = document.getElementById('create-name');
+    const j = document.getElementById('join-name');
+    if (c) c.value = prefs.name;
+    if (j) j.value = prefs.name;
+  }
+})();
+
+// ============================================================
+// SES MOTORU — Web Audio API ile sentetik ses (dosya yok)
+// ============================================================
+const SFX = (() => {
+  let ctx = null;
+  let masterGain = null;
+  let muted = false;
+  let userInteracted = false;
+
+  function ensureCtx() {
+    if (ctx) {
+      // Suspended ise resume dene (sadece user gesture sonrası garantili)
+      if (ctx.state === 'suspended' && userInteracted) {
+        ctx.resume().catch(() => {});
+      }
+      return ctx;
+    }
+    if (!userInteracted) return null; // İlk kullanıcı etkileşimine kadar bekle
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = ctx.createGain();
+      masterGain.gain.value = 0.35;
+      masterGain.connect(ctx.destination);
+    } catch (e) { ctx = null; }
+    return ctx;
+  }
+
+  // Kullanıcı ilk gesture'da context'i prime et
+  function primeOnFirstInteraction() {
+    if (userInteracted) return;
+    userInteracted = true;
+    ensureCtx();
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+  }
+  // Geniş kapsamlı listener — herhangi bir etkileşimde tetiklenir
+  ['click', 'touchstart', 'keydown'].forEach(ev => {
+    document.addEventListener(ev, primeOnFirstInteraction, { once: false, capture: true });
+  });
+
+  function setMuted(m) {
+    muted = m;
+    savePrefs({ muted: m });
+    if (masterGain) masterGain.gain.value = m ? 0 : 0.35;
+  }
+
+  // Tek bir ton (osc + envelope)
+  function tone(freq, dur = 0.12, type = 'sine', vol = 0.5, attack = 0.005, decay = null) {
+    if (muted) return;
+    const c = ensureCtx();
+    if (!c) return;
+    if (c.state === 'suspended') c.resume();
+    const osc = c.createOscillator();
+    const g = c.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    const now = c.currentTime;
+    const dec = decay ?? dur;
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(vol, now + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dec);
+    osc.connect(g);
+    g.connect(masterGain);
+    osc.start(now);
+    osc.stop(now + dec + 0.02);
+  }
+
+  // Frekans rampası (örn: süpürmeler, patlamalar)
+  function sweep(fromF, toF, dur = 0.2, type = 'sawtooth', vol = 0.4) {
+    if (muted) return;
+    const c = ensureCtx();
+    if (!c) return;
+    if (c.state === 'suspended') c.resume();
+    const osc = c.createOscillator();
+    const g = c.createGain();
+    osc.type = type;
+    const now = c.currentTime;
+    osc.frequency.setValueAtTime(fromF, now);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(20, toF), now + dur);
+    g.gain.setValueAtTime(vol, now);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    osc.connect(g);
+    g.connect(masterGain);
+    osc.start(now);
+    osc.stop(now + dur + 0.02);
+  }
+
+  // Gürültü (patlama, sıçrama)
+  function noise(dur = 0.2, vol = 0.5, filterFreq = null) {
+    if (muted) return;
+    const c = ensureCtx();
+    if (!c) return;
+    if (c.state === 'suspended') c.resume();
+    const buf = c.createBuffer(1, c.sampleRate * dur, c.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1);
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    const g = c.createGain();
+    const now = c.currentTime;
+    g.gain.setValueAtTime(vol, now);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    src.connect(g);
+    if (filterFreq) {
+      const f = c.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = filterFreq;
+      g.connect(f);
+      f.connect(masterGain);
+    } else {
+      g.connect(masterGain);
+    }
+    src.start(now);
+    src.stop(now + dur);
+  }
+
+  // Akor / hızlı arpej
+  function arpeggio(freqs, step = 0.06, type = 'square', vol = 0.4) {
+    freqs.forEach((f, i) => setTimeout(() => tone(f, 0.12, type, vol), i * step * 1000));
+  }
+
+  // -------- Yüksek seviye efektler --------
+  return {
+    setMuted, isMuted: () => muted,
+    // UI
+    click:    () => tone(900, 0.05, 'square', 0.2),
+    hover:    () => tone(1200, 0.03, 'sine', 0.15),
+    success:  () => arpeggio([523, 659, 784], 0.07, 'triangle', 0.4),
+    error:    () => sweep(440, 110, 0.22, 'sawtooth', 0.35),
+    notify:   () => arpeggio([880, 1320], 0.08, 'sine', 0.35),
+    win:      () => arpeggio([523, 659, 784, 1047, 1319], 0.09, 'triangle', 0.45),
+    lose:     () => arpeggio([392, 311, 247, 196], 0.12, 'sawtooth', 0.35),
+
+    // Kelime Zinciri
+    kelimeOk:   () => tone(700, 0.1, 'triangle', 0.35),
+    kelimeErr:  () => sweep(330, 110, 0.18, 'sawtooth', 0.3),
+    kelimePass: () => tone(450, 0.15, 'sine', 0.3),
+    kelimeLife: () => sweep(220, 80, 0.3, 'square', 0.4),
+    kelimeChange: () => arpeggio([440, 660], 0.08, 'square', 0.3),
+
+    // Hafıza
+    cardFlip:  () => tone(800, 0.06, 'triangle', 0.25),
+    match:     () => arpeggio([523, 784, 1047], 0.06, 'sine', 0.4),
+    noMatch:   () => tone(220, 0.15, 'sawtooth', 0.25),
+
+    // Çizim
+    cizimCorrect: () => arpeggio([659, 784, 988], 0.08, 'triangle', 0.4),
+    cizimHint:    () => tone(550, 0.18, 'sine', 0.3),
+    cizimReveal:  () => arpeggio([523, 392], 0.15, 'sine', 0.35),
+
+    // Trivia
+    triviaCorrect: () => arpeggio([659, 880, 1175], 0.07, 'triangle', 0.45),
+    triviaWrong:   () => sweep(330, 130, 0.3, 'sawtooth', 0.4),
+    triviaTick:    () => tone(1100, 0.04, 'square', 0.2),
+    triviaFifty:   () => arpeggio([440, 880], 0.08, 'square', 0.35),
+
+    // Vampir
+    vampirNight:  () => sweep(330, 165, 0.6, 'sine', 0.4),
+    vampirDay:    () => arpeggio([523, 659, 784], 0.1, 'triangle', 0.4),
+    vampirDeath:  () => { sweep(220, 60, 0.5, 'sawtooth', 0.4); setTimeout(() => noise(0.3, 0.25, 800), 100); },
+    vampirVote:   () => tone(660, 0.08, 'square', 0.3),
+
+    // Yılan
+    yilanEat:        () => tone(880, 0.06, 'triangle', 0.3),
+    yilanEatMed:     () => arpeggio([880, 1100], 0.05, 'triangle', 0.35),
+    yilanEatLarge:   () => arpeggio([880, 1100, 1320], 0.05, 'triangle', 0.4),
+    yilanBoostStart: () => sweep(440, 880, 0.15, 'sawtooth', 0.25),
+    yilanDeath:      () => { sweep(440, 80, 0.4, 'sawtooth', 0.4); setTimeout(() => noise(0.25, 0.3, 600), 80); },
+
+    // Amiral Battı
+    amiralShoot: () => sweep(880, 220, 0.18, 'sawtooth', 0.35),
+    amiralHit:   () => { noise(0.35, 0.55, 600); setTimeout(() => sweep(220, 60, 0.3, 'square', 0.45), 50); },
+    amiralMiss:  () => { sweep(660, 220, 0.15, 'sine', 0.25); setTimeout(() => noise(0.18, 0.25, 2000), 80); },
+    amiralSunk:  () => { noise(0.6, 0.7, 400); setTimeout(() => sweep(180, 50, 0.5, 'sawtooth', 0.5), 100); setTimeout(() => arpeggio([196, 165, 131], 0.1, 'sawtooth', 0.35), 350); },
+    amiralPlace: () => tone(600, 0.06, 'square', 0.25),
+
+    // Uno
+    unoPlay:   () => tone(750, 0.07, 'square', 0.3),
+    unoDraw:   () => sweep(550, 330, 0.15, 'triangle', 0.3),
+    unoPlus2:  () => arpeggio([440, 330, 220], 0.07, 'sawtooth', 0.4),
+    unoPlus4:  () => arpeggio([440, 330, 220, 110], 0.07, 'sawtooth', 0.45),
+    unoSkip:   () => sweep(880, 220, 0.2, 'square', 0.3),
+    unoReverse:() => { tone(660, 0.1, 'triangle', 0.3); setTimeout(() => tone(440, 0.1, 'triangle', 0.3), 100); },
+    unoCall:   () => arpeggio([880, 988, 1175, 1319], 0.07, 'square', 0.5),
+    unoCatch:  () => sweep(660, 165, 0.25, 'sawtooth', 0.4)
+  };
+})();
+
+// ============================================================
+// TEKRAR OYNA — tüm game-over ekranlarında ortak
+// ============================================================
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-replay]');
+  if (!btn) return;
+  if (state.you?.id !== state.host) {
+    showToast('Sadece host tekrar başlatabilir!', 'error');
     return;
   }
-  socket.emit('room:create', { name });
+  SFX.click();
+  socket.emit('game:replay');
 });
 
-document.getElementById('btn-join').addEventListener('click', () => {
-  const name = document.getElementById('join-name').value.trim();
-  const code = document.getElementById('join-code').value.trim().toUpperCase();
-  if (!name) {
-    showToast('Bir ad gir!', 'error');
+// Host-only butonların görünürlüğü — room:update'te güncellenecek
+function updateHostOnlyVisibility() {
+  const isHost = state.you?.id === state.host;
+  document.querySelectorAll('.host-only').forEach(el => {
+    el.style.display = isHost ? '' : 'none';
+  });
+}
+
+// ============================================================
+// YARDIM/SSS + KLAVYE KISAYOLLARI MODALI
+// ============================================================
+const helpModal = document.getElementById('help-modal');
+
+function openHelp(tab = 'rules') {
+  if (!helpModal) return;
+  helpModal.style.display = 'flex';
+  document.querySelectorAll('.help-tab').forEach(t => t.classList.toggle('active', t.dataset.htab === tab));
+  document.querySelectorAll('.help-pane').forEach(p => p.classList.toggle('active', p.dataset.hpane === tab));
+}
+function closeHelp() {
+  if (helpModal) helpModal.style.display = 'none';
+}
+
+document.getElementById('help-toggle')?.addEventListener('click', () => openHelp('rules'));
+document.getElementById('help-close')?.addEventListener('click', closeHelp);
+helpModal?.addEventListener('click', (e) => {
+  if (e.target === helpModal) closeHelp();
+});
+
+document.querySelectorAll('.help-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const t = tab.dataset.htab;
+    document.querySelectorAll('.help-tab').forEach(x => x.classList.toggle('active', x === tab));
+    document.querySelectorAll('.help-pane').forEach(p => p.classList.toggle('active', p.dataset.hpane === t));
+  });
+});
+
+// Klavye kısayolları: ? / F1 → yardım, Esc → kapat, Trivia 1-4
+document.addEventListener('keydown', (e) => {
+  // Input içindeysek genel kısayolları çalıştırma
+  const tag = e.target.tagName;
+  const isInput = (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable);
+
+  if (!isInput && (e.key === '?' || e.key === 'F1')) {
+    e.preventDefault();
+    if (helpModal.style.display === 'none' || !helpModal.style.display) openHelp('rules');
+    else closeHelp();
+  }
+  if (e.key === 'Escape') {
+    // Açık modalları sırayla kapat
+    const openModals = [
+      ['help-modal', closeHelp],
+      ['qr-modal', () => { document.getElementById('qr-modal').style.display = 'none'; }],
+      ['password-modal', () => { document.getElementById('password-modal').style.display = 'none'; pendingJoin = null; }],
+      ['settings-modal', () => closeSettings()],
+      ['theme-picker', () => { document.getElementById('theme-picker').style.display = 'none'; }]
+    ];
+    for (const [id, fn] of openModals) {
+      const el = document.getElementById(id);
+      if (el && el.style.display && el.style.display !== 'none') {
+        fn();
+        return;
+      }
+    }
+  }
+
+  // Trivia 1-4 kısayolları
+  if (!isInput && state.game === 'trivia' && state.gameState?.phase === 'question') {
+    const n = parseInt(e.key);
+    if (n >= 1 && n <= 4) {
+      const optBtn = document.querySelectorAll('#trivia-options .trivia-option')[n - 1];
+      if (optBtn && !optBtn.disabled) optBtn.click();
+    }
+  }
+});
+
+// ============================================================
+// HIZLI TEPKİ EMOJİLERİ
+// ============================================================
+document.querySelectorAll('.reaction-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const emoji = btn.dataset.emoji;
+    if (!emoji) return;
+    SFX.click();
+    socket.emit('room:reaction', { emoji });
+    btn.classList.remove('pulse');
+    void btn.offsetWidth;
+    btn.classList.add('pulse');
+  });
+});
+
+// Reaction'ı oyuncunun avatarı üzerinde göster
+function spawnReaction(playerId, emoji) {
+  // İlgili oyuncunun avatarını bul (ilk eşleşen, en yakın görünür)
+  const candidates = document.querySelectorAll(`[data-player-id="${playerId}"]`);
+  let target = null;
+  for (const el of candidates) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight && rect.bottom > 0) {
+      target = el; break;
+    }
+  }
+  const layer = document.getElementById('reaction-layer');
+  if (!layer) return;
+  const floater = document.createElement('div');
+  floater.className = 'reaction-floater';
+  floater.textContent = emoji;
+  if (target) {
+    const rect = target.getBoundingClientRect();
+    floater.style.left = (rect.left + rect.width / 2) + 'px';
+    floater.style.top = (rect.top - 4) + 'px';
+  } else {
+    // Avatar görünmüyorsa ekran ortasından yukarı
+    floater.style.left = '50%';
+    floater.style.top = (window.innerHeight - 200) + 'px';
+    floater.style.transform = 'translateX(-50%)';
+  }
+  layer.appendChild(floater);
+  setTimeout(() => floater.remove(), 2200);
+}
+
+socket.on('room:reaction', ({ playerId, emoji }) => {
+  spawnReaction(playerId, emoji);
+});
+
+// ============================================================
+// 3-2-1 GERİ SAYIM
+// ============================================================
+function showCountdown(onDone) {
+  const overlay = document.getElementById('countdown-overlay');
+  const num = document.getElementById('countdown-number');
+  if (!overlay || !num) { onDone?.(); return; }
+  overlay.style.display = 'flex';
+  let n = 3;
+  const tick = () => {
+    if (n === 0) {
+      num.textContent = 'BAŞLA!';
+      num.style.fontSize = 'clamp(4rem, 12vw, 8rem)';
+      SFX.success();
+      setTimeout(() => {
+        overlay.style.display = 'none';
+        num.style.fontSize = '';
+        onDone?.();
+      }, 800);
+      return;
+    }
+    num.textContent = n;
+    num.style.fontSize = '';
+    // re-trigger animation
+    num.style.animation = 'none';
+    void num.offsetWidth;
+    num.style.animation = '';
+    SFX.triviaTick();
+    n--;
+    setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+// ============================================================
+// KONFETİ (kazanma kutlaması)
+// ============================================================
+const Confetti = (() => {
+  const canvas = document.getElementById('confetti-canvas');
+  const ctx = canvas?.getContext('2d');
+  let particles = [];
+  let animId = null;
+  function getColors() {
+    // Tema değişkenlerinden oku — tema değiştiğinde otomatik adapte
+    const css = getComputedStyle(document.documentElement);
+    const v = (name, fallback) => (css.getPropertyValue(name).trim() || fallback);
+    return [
+      v('--color-primary', '#ff3e8a'),
+      v('--color-secondary', '#00d4ff'),
+      v('--color-accent-1', '#ffd93d'),
+      v('--color-accent-2', '#6bcf7f'),
+      v('--color-accent-3', '#a86bff'),
+      v('--color-danger', '#ff5757'),
+      v('--color-success', '#4ade80')
+    ];
+  }
+
+  function resize() {
+    if (!canvas) return;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resize);
+
+  function spawn(count = 120, fromTop = true) {
+    if (!canvas) return;
+    resize();
+    const themeColors = getColors();
+    for (let i = 0; i < count; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: fromTop ? -20 - Math.random() * 100 : canvas.height / 2,
+        vx: (Math.random() - 0.5) * 6,
+        vy: fromTop ? Math.random() * 3 + 2 : (Math.random() - 0.5) * 12 - 4,
+        gravity: 0.18 + Math.random() * 0.08,
+        size: Math.random() * 8 + 4,
+        rot: Math.random() * Math.PI * 2,
+        vr: (Math.random() - 0.5) * 0.3,
+        color: themeColors[Math.floor(Math.random() * themeColors.length)],
+        shape: Math.random() < 0.5 ? 'rect' : 'circle',
+        opacity: 1
+      });
+    }
+  }
+
+  function step() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.vy += p.gravity;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.rot += p.vr;
+      p.opacity -= 0.003;
+      if (p.y > canvas.height + 50 || p.opacity <= 0) {
+        particles.splice(i, 1);
+        continue;
+      }
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.opacity);
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      if (p.shape === 'rect') {
+        ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, p.size / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    if (particles.length > 0) {
+      animId = requestAnimationFrame(step);
+      canvas.classList.add('active');
+    } else {
+      animId = null;
+      canvas.classList.remove('active');
+    }
+  }
+
+  function celebrate(intensity = 'normal') {
+    if (!canvas) return;
+    const count = intensity === 'big' ? 250 : 120;
+    spawn(count, true);
+    // Yan patlamalar
+    if (intensity === 'big') {
+      setTimeout(() => spawn(80, false), 200);
+      setTimeout(() => spawn(80, false), 600);
+    }
+    if (!animId) step();
+  }
+  return { celebrate };
+})();
+
+// ============================================================
+// SEKME BAŞLIK FLAŞI + SIRA-BİLDİRİM
+// ============================================================
+const ORIG_TITLE = document.title;
+let titleFlashTimer = null;
+let titleFlashOn = false;
+
+function startTitleFlash(message = '⚡ Sıra sende!') {
+  if (titleFlashTimer) return;
+  titleFlashTimer = setInterval(() => {
+    titleFlashOn = !titleFlashOn;
+    document.title = titleFlashOn ? message : ORIG_TITLE;
+  }, 900);
+}
+function stopTitleFlash() {
+  if (titleFlashTimer) { clearInterval(titleFlashTimer); titleFlashTimer = null; }
+  document.title = ORIG_TITLE;
+  titleFlashOn = false;
+}
+// Kullanıcı sekmeye geri dönünce flaşı kapat
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) stopTitleFlash();
+});
+
+// Oyun bitti — konfeti + ses (oyun başına bir kez)
+let _lastGameOverKey = null;
+function checkGameOverCelebration(data) {
+  if (!data || !data.gameState || !data.gameState.gameOver) {
     return;
   }
+  // Aynı oyun bitişini tekrar tetikleme
+  const key = `${data.code}-${data.game}-${data.gameState.winner || 'x'}`;
+  if (key === _lastGameOverKey) return;
+  _lastGameOverKey = key;
+
+  // Kazanan kendi adımsa daha yoğun konfeti + büyük kazanma sesi
+  const myName = state.you ? data.players.find(p => p.id === state.you.id)?.name : null;
+  const won = data.gameState.winner === myName;
+  // Yılan/Vampir takım kazanması farklı: skor karşılaştır
+  let confettiLevel = 'normal';
+  let winSound = SFX.win;
+  if (won) {
+    confettiLevel = 'big';
+  } else {
+    // Vampir köyleri/vampirler/jester kontrolü
+    if (data.game === 'vampir' && data.gameState.winner === 'koyluler') {
+      const meInRoom = data.players.find(p => p.id === state.you?.id);
+      if (meInRoom?.role && meInRoom.role !== 'vampir' && meInRoom.role !== 'soytari') confettiLevel = 'big';
+    } else if (data.game === 'vampir' && data.gameState.winner === 'vampirler') {
+      const meInRoom = data.players.find(p => p.id === state.you?.id);
+      if (meInRoom?.role === 'vampir') confettiLevel = 'big';
+    } else if (data.game === 'vampir' && data.gameState.winner === 'soytari') {
+      // soytarı kazandı: jester olansa büyük
+      const meInRoom = data.players.find(p => p.id === state.you?.id);
+      if (meInRoom?.role === 'soytari') confettiLevel = 'big';
+    }
+  }
+
+  // Kaybedenler için hafif "lose" sesi
+  setTimeout(() => {
+    if (confettiLevel === 'big') {
+      SFX.win();
+      Confetti.celebrate('big');
+    } else {
+      // Herkes için yine de küçük konfeti (kazanan birisi var)
+      Confetti.celebrate('normal');
+      SFX.win();
+    }
+  }, 200);
+}
+
+// Sıra bana geldi mi? — room:update'te tespit
+let _wasMyTurnLast = false;
+function checkMyTurnNotification(data) {
+  if (!data || !data.gameState || !state.you) return;
+  const gs = data.gameState;
+  let isMyTurn = false;
+
+  if (gs.type === 'kelime-zinciri') {
+    const cur = data.players[gs.currentPlayerIndex];
+    isMyTurn = cur?.id === state.you.id && !gs.gameOver;
+  } else if (gs.type === 'hafiza') {
+    const cur = data.players[gs.currentPlayerIndex];
+    isMyTurn = cur?.id === state.you.id && !gs.gameOver;
+  } else if (gs.type === 'cizim') {
+    const drawer = data.players[gs.drawerIndex];
+    isMyTurn = drawer?.id === state.you.id && gs.phase === 'wordSelect';
+  } else if (gs.type === 'amiral') {
+    isMyTurn = gs.currentTurn === state.you.id && gs.phase === 'battle';
+  } else if (gs.type === 'uno') {
+    const cur = data.players[gs.currentPlayerIndex];
+    isMyTurn = cur?.id === state.you.id && !gs.gameOver;
+  }
+
+  if (isMyTurn && !_wasMyTurnLast) {
+    // Yeni sıra → ses + (sekme dışındaysa flash)
+    if (document.hidden) {
+      SFX.notify();
+      startTitleFlash('⚡ Sıra sende!');
+    }
+  } else if (!isMyTurn) {
+    if (titleFlashTimer) stopTitleFlash();
+  }
+  _wasMyTurnLast = isMyTurn;
+}
+
+// Mute durumunu yükle ve buton bağla
+(function initMute() {
+  const prefs = loadPrefs();
+  const btn = document.getElementById('sound-toggle');
+  function updateBtn() {
+    if (!btn) return;
+    btn.textContent = SFX.isMuted() ? '🔇' : '🔊';
+    btn.title = SFX.isMuted() ? 'Sesi aç' : 'Sesi kapat';
+  }
+  if (prefs.muted) SFX.setMuted(true);
+  updateBtn();
+  if (btn) {
+    btn.addEventListener('click', () => {
+      SFX.setMuted(!SFX.isMuted());
+      updateBtn();
+      if (!SFX.isMuted()) SFX.click(); // test
+    });
+  }
+})();
+
+// ============================================================
+// TEMA & TAM EKRAN
+// ============================================================
+function applyTheme(theme) {
+  if (!['pembe', 'karanlik', 'pastel'].includes(theme)) theme = 'pembe';
+  document.documentElement.setAttribute('data-theme', theme);
+  savePrefs({ theme });
+}
+(function initTheme() {
+  const prefs = loadPrefs();
+  applyTheme(prefs.theme || 'pembe');
+})();
+
+const themeBtn = document.getElementById('theme-toggle');
+const themePicker = document.getElementById('theme-picker');
+if (themeBtn && themePicker) {
+  themeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    themePicker.style.display = themePicker.style.display === 'none' ? 'flex' : 'none';
+  });
+  themePicker.querySelectorAll('.theme-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      applyTheme(opt.dataset.theme);
+      themePicker.style.display = 'none';
+    });
+  });
+  document.addEventListener('click', (e) => {
+    if (!themePicker.contains(e.target) && e.target !== themeBtn) {
+      themePicker.style.display = 'none';
+    }
+  });
+}
+
+// Tam ekran butonu (yalnızca destekleyen tarayıcılarda göster)
+const fsBtn = document.getElementById('fullscreen-toggle');
+if (fsBtn && document.documentElement.requestFullscreen) {
+  fsBtn.style.display = '';
+  fsBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    fsBtn.textContent = document.fullscreenElement ? '⛶' : '⛶';
+    fsBtn.title = document.fullscreenElement ? 'Tam ekrandan çık' : 'Tam ekran';
+  });
+}
+
+document.getElementById('btn-create').addEventListener('click', () => {
+  let name = document.getElementById('create-name').value.trim();
+  if (!name) name = randomName();
+  const password = document.getElementById('create-password').value;
+  savePrefs({ name });
+  socket.emit('room:create', { name, password });
+});
+
+// Pending join state — şifre gerekirse kullanılmak üzere
+let pendingJoin = null;
+
+function doJoin(name, code, password) {
+  socket.emit('room:join', { code, name, password: password || '' });
+}
+
+document.getElementById('btn-join').addEventListener('click', () => {
+  let name = document.getElementById('join-name').value.trim();
+  const code = document.getElementById('join-code').value.trim().toUpperCase();
+  if (!name) name = randomName();
   if (code.length !== 4) {
     showToast('Oda kodu 4 karakter olmalı!', 'error');
     return;
   }
-  socket.emit('room:join', { code, name });
+  savePrefs({ name });
+  pendingJoin = { name, code };
+  doJoin(name, code, '');
 });
+
+// Sunucu şifre istediğinde modal aç
+socket.on('room:passwordRequired', ({ code }) => {
+  if (!pendingJoin) return;
+  document.getElementById('password-error').textContent = '';
+  document.getElementById('join-password').value = '';
+  document.getElementById('password-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('join-password').focus(), 100);
+});
+
+function submitPassword() {
+  const pw = document.getElementById('join-password').value;
+  if (!pw) {
+    document.getElementById('password-error').textContent = 'Şifre boş olamaz';
+    return;
+  }
+  if (!pendingJoin) return;
+  doJoin(pendingJoin.name, pendingJoin.code, pw);
+}
+
+document.getElementById('password-ok').addEventListener('click', submitPassword);
+document.getElementById('join-password').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitPassword();
+});
+document.getElementById('password-cancel').addEventListener('click', () => {
+  document.getElementById('password-modal').style.display = 'none';
+  pendingJoin = null;
+});
+
+// (Birleşik room:error handler aşağıda — şifre yanlışsa modal'da, yoksa toast'ta gösterir)
 
 // Enter ile gönder
 document.getElementById('create-name').addEventListener('keydown', e => {
@@ -76,6 +820,50 @@ document.getElementById('join-code').addEventListener('keydown', e => {
 // ============================================================
 // LOBİ EKRANI
 // ============================================================
+// ============================================================
+// LOBI SOHBETİ
+// ============================================================
+function renderLobbyChat() {
+  const list = document.getElementById('lobby-chat-list');
+  if (!list) return;
+  const chat = state.lobbyChat || [];
+  if (chat.length === 0) {
+    list.innerHTML = '<p class="lobby-chat-empty">Henüz mesaj yok. İlk sen yaz!</p>';
+    return;
+  }
+  list.innerHTML = chat.map(m => {
+    const isMe = m.playerId === state.you?.id;
+    return `
+      <div class="lobby-chat-msg ${isMe ? 'is-me' : ''}">
+        ${avatarHTML({ id: m.playerId, name: m.name }, 'sm')}
+        <div class="msg-body">
+          <span class="msg-name">${escapeHtml(m.name)}${isMe ? ' (sen)' : ''}</span>
+          <span class="msg-text">${escapeHtml(m.text)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  list.scrollTop = list.scrollHeight;
+}
+
+function sendLobbyChat() {
+  const input = document.getElementById('lobby-chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  socket.emit('lobby:chat', { text });
+  input.value = '';
+}
+
+document.getElementById('lobby-chat-send')?.addEventListener('click', sendLobbyChat);
+document.getElementById('lobby-chat-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendLobbyChat();
+});
+
+document.getElementById('lobby-ready-btn')?.addEventListener('click', () => {
+  socket.emit('room:toggleReady');
+  SFX.click();
+});
+
 document.getElementById('btn-leave').addEventListener('click', () => {
   if (confirm('Odadan ayrılmak istediğine emin misin?')) {
     socket.emit('room:leave');
@@ -91,6 +879,60 @@ document.getElementById('btn-copy-code').addEventListener('click', () => {
     showToast('Kopyalanamadı, manuel paylaş: ' + state.roomCode);
   });
 });
+
+// Davet linki — paylaşılabilir URL üret
+function buildInviteUrl(code) {
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.searchParams.set('room', code);
+  return url.toString();
+}
+
+document.getElementById('btn-copy-link').addEventListener('click', () => {
+  if (!state.roomCode) return;
+  const url = buildInviteUrl(state.roomCode);
+  navigator.clipboard.writeText(url).then(() => {
+    showToast('🔗 Davet linki kopyalandı!', 'success');
+  }).catch(() => {
+    showToast('Kopyalanamadı: ' + url);
+  });
+});
+
+// QR modali
+document.getElementById('btn-show-qr').addEventListener('click', () => {
+  if (!state.roomCode) return;
+  const url = buildInviteUrl(state.roomCode);
+  const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(url);
+  document.getElementById('qr-image').src = qrUrl;
+  document.getElementById('qr-url').textContent = url;
+  document.getElementById('qr-modal').style.display = 'flex';
+});
+document.getElementById('qr-close').addEventListener('click', () => {
+  document.getElementById('qr-modal').style.display = 'none';
+});
+document.getElementById('qr-copy-link').addEventListener('click', () => {
+  document.getElementById('btn-copy-link').click();
+});
+document.getElementById('qr-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'qr-modal') {
+    document.getElementById('qr-modal').style.display = 'none';
+  }
+});
+
+// URL'den oda kodu varsa form'a yaz (otomatik katılma yok, isim girilmesi şart)
+(function checkInviteUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const inviteCode = params.get('room');
+  if (inviteCode && /^[A-Z0-9]{4}$/i.test(inviteCode)) {
+    const codeInput = document.getElementById('join-code');
+    if (codeInput) codeInput.value = inviteCode.toUpperCase();
+    showToast('🔗 Davet linkiyle geldin! İsmini gir ve "Katıl"a bas.', '');
+    // Scroll to join section
+    setTimeout(() => {
+      document.getElementById('join-name')?.focus();
+    }, 300);
+  }
+})();
 
 // ============================================================
 // AYARLAR MODALI
@@ -114,6 +956,52 @@ const GAME_INFO = {
 function closeSettings() {
   settingsModal.style.display = 'none';
   pendingGameType = null;
+}
+
+function renderReadyPanel() {
+  const row = document.getElementById('ready-row');
+  if (!row) return;
+  const isHost = state.you?.id === state.host;
+  const total = state.players.length;
+  const readyCount = state.players.filter(p => p.ready || p.id === state.host).length;
+
+  row.innerHTML = `
+    <div class="ready-list">
+      ${state.players.map(p => {
+        const isMe = p.id === state.you?.id;
+        const ready = p.ready || p.id === state.host; // host her zaman hazır sayılır
+        return `
+          <span class="ready-chip ${ready ? 'is-ready' : ''} ${isMe ? 'is-me' : ''}">
+            ${avatarHTML(p, 'sm')}
+            <span>${escapeHtml(p.name)}${p.id === state.host ? ' 👑' : ''}</span>
+            ${ready ? '<span class="ready-tick">✓</span>' : ''}
+          </span>
+        `;
+      }).join('')}
+    </div>
+    <p class="ready-stat">${readyCount}/${total} hazır</p>
+  `;
+
+  // Hazırım butonu (sadece non-host)
+  const readyBtn = document.getElementById('settings-ready-btn');
+  const me = state.players.find(p => p.id === state.you?.id);
+  if (readyBtn) {
+    if (isHost) {
+      readyBtn.style.display = 'none';
+    } else {
+      readyBtn.style.display = '';
+      readyBtn.textContent = me?.ready ? '✓ Hazırım' : '✋ Hazırım';
+      readyBtn.classList.toggle('btn-ready-on', !!me?.ready);
+    }
+  }
+
+  // Başlat butonunda hazır sayısı
+  const startBtn = document.getElementById('settings-start');
+  if (startBtn) {
+    const allReady = readyCount === total;
+    startBtn.textContent = allReady ? '▶ Başlat' : `▶ Başlat (${readyCount}/${total} hazır)`;
+    startBtn.style.opacity = allReady ? '1' : '0.85';
+  }
 }
 
 function openSettingsForGame(gameType) {
@@ -142,10 +1030,17 @@ function openSettingsForGame(gameType) {
 
   settingsModal.style.display = 'flex';
   applySettingsToUI();
+  renderReadyPanel();
 }
 
 document.getElementById('settings-close').addEventListener('click', closeSettings);
 document.getElementById('settings-cancel').addEventListener('click', closeSettings);
+
+// Hazırım butonu
+document.getElementById('settings-ready-btn').addEventListener('click', () => {
+  socket.emit('room:toggleReady');
+  SFX.click();
+});
 
 document.getElementById('settings-start').addEventListener('click', () => {
   if (!pendingGameType) return;
@@ -156,6 +1051,12 @@ document.getElementById('settings-start').addEventListener('click', () => {
   if (state.players.length < 2) {
     showToast('En az 2 oyuncu lazım!', 'error');
     return;
+  }
+  // Hepsi hazır mı? Değilse onay iste
+  const total = state.players.length;
+  const readyCount = state.players.filter(p => p.ready || p.id === state.host).length;
+  if (readyCount < total) {
+    if (!confirm(`${total - readyCount} oyuncu henüz hazır değil. Yine de başlatmak istiyor musun?`)) return;
   }
   socket.emit('game:start', { gameType: pendingGameType });
   closeSettings();
@@ -273,19 +1174,31 @@ function renderLobby() {
     const li = document.createElement('li');
     if (p.id === state.host) li.classList.add('is-host');
     if (p.id === state.you?.id) li.classList.add('is-you');
-
-    const initial = (p.name[0] || '?').toUpperCase();
-    const colors = ['#ff3e8a', '#00d4ff', '#ffd93d', '#6bcf7f', '#a86bff', '#ff9f4a', '#4ade80', '#f472b6'];
-    const color = colors[p.name.charCodeAt(0) % colors.length];
+    const isReady = p.ready || p.id === state.host;
 
     li.innerHTML = `
-      <span class="player-avatar" style="background:${color}">${initial}</span>
+      ${avatarHTML(p, 'md')}
       <span class="player-name-text">${escapeHtml(p.name)}</span>
       ${p.id === state.host ? '<span class="player-tag">👑 HOST</span>' : ''}
       ${p.id === state.you?.id && p.id !== state.host ? '<span class="player-tag you">SEN</span>' : ''}
+      ${isReady && p.id !== state.host ? '<span class="player-tag ready-tag">✓ HAZIR</span>' : ''}
     `;
     list.appendChild(li);
   });
+
+  // Non-host için Hazırım butonu lobide
+  const lobbyReadyBtn = document.getElementById('lobby-ready-btn');
+  if (lobbyReadyBtn) {
+    const isHost = state.you?.id === state.host;
+    const me = state.players.find(p => p.id === state.you?.id);
+    if (isHost) {
+      lobbyReadyBtn.style.display = 'none';
+    } else {
+      lobbyReadyBtn.style.display = '';
+      lobbyReadyBtn.textContent = me?.ready ? '✓ Hazırım (vazgeç)' : '✋ Hazırım';
+      lobbyReadyBtn.classList.toggle('btn-ready-on', !!me?.ready);
+    }
+  }
 
   // Host ipucu
   const hint = document.getElementById('host-hint');
@@ -461,6 +1374,8 @@ const HAFIZA_THEME_LABELS = {
   'meyve':   '🍎 Meyve & Sebze'
 };
 
+let _hafizaLastMatched = 0;
+let _hafizaLastFlipped = 0;
 function renderHafiza() {
   const gs = state.gameState;
   if (!gs) return;
@@ -477,6 +1392,15 @@ function renderHafiza() {
 
   // İlerleme
   const matchedCount = gs.cards.filter(c => c.matched).length / 2;
+  // Match tespiti — sayı arttıysa match sesi
+  if (matchedCount > _hafizaLastMatched) SFX.match();
+  // Yanlış: 2 kart açık -> 0 açık (matched değişmedi) = no-match
+  const flippedNow = gs.cards.filter(c => c.flipped && !c.matched).length;
+  if (_hafizaLastFlipped === 2 && flippedNow === 0 && matchedCount === _hafizaLastMatched) {
+    SFX.noMatch();
+  }
+  _hafizaLastMatched = matchedCount;
+  _hafizaLastFlipped = flippedNow;
   const progressEl = document.getElementById('hafiza-progress-text');
   if (progressEl) progressEl.textContent = `${matchedCount} / ${gs.pairCount}`;
 
@@ -511,6 +1435,7 @@ function renderHafiza() {
         return;
       }
       if (gs.lockBoard || card.flipped || card.matched) return;
+      SFX.cardFlip();
       socket.emit('hafiza:flip', { cardIndex: idx });
     });
     board.appendChild(btn);
@@ -540,6 +1465,7 @@ function renderScoreboard(elementId, activeIndex) {
     if (i === activeIndex) pill.classList.add('active');
     if (p.eliminated) pill.classList.add('eliminated');
     pill.innerHTML = `
+      ${avatarHTML(p, 'sm')}
       <span class="name">${escapeHtml(p.name)}</span>
       <span class="score">${p.score || 0}</span>
     `;
@@ -811,16 +1737,21 @@ function renderCizim() {
   const tools = document.getElementById('cizim-tools');
   tools.style.display = (isDrawer && gs.phase === 'drawing') ? 'flex' : 'none';
 
-  // İpucu butonu durumu
+  // İpucu butonu durumu (mobilde kısa metin)
   const hintBtn = document.getElementById('cizim-hint');
   if (hintBtn) {
+    const isMobile = window.innerWidth <= 640;
     if ((gs.hintLevel || 0) >= (gs.maxHintLevel || 2)) {
       hintBtn.disabled = true;
-      hintBtn.textContent = '💡 İpucu (bitti)';
+      hintBtn.textContent = isMobile ? '💡 ✓' : '💡 İpucu (bitti)';
     } else {
       hintBtn.disabled = false;
-      const nextLabel = (gs.hintLevel === 0) ? '#1 Harf sayısı (-30% puan)' : '#2 Baş harf (-50% puan)';
-      hintBtn.textContent = `💡 ${nextLabel}`;
+      if (isMobile) {
+        hintBtn.textContent = (gs.hintLevel === 0) ? '💡 -30%' : '💡 -50%';
+      } else {
+        const nextLabel = (gs.hintLevel === 0) ? '#1 Harf sayısı (-30% puan)' : '#2 Baş harf (-50% puan)';
+        hintBtn.textContent = `💡 ${nextLabel}`;
+      }
     }
   }
 
@@ -980,6 +1911,12 @@ function renderTrivia() {
     }
   } else if (gs.phase === 'reveal') {
     const myResult = gs.lastAnswers?.results.find(r => r.playerId === state.you?.id);
+    // Reveal sesini sadece bir kez çal
+    if (!gs._sfxPlayed) {
+      gs._sfxPlayed = true;
+      if (myResult && myResult.correct) SFX.triviaCorrect();
+      else if (myResult && myResult.answerIndex >= 0) SFX.triviaWrong();
+    }
     if (myResult && myResult.correct) {
       status.textContent = `🎉 Doğru! +${myResult.points} puan`;
     } else if (myResult && myResult.answerIndex >= 0) {
@@ -1034,9 +1971,17 @@ const vampirState = {
 document.getElementById('vampir-exit').addEventListener('click', exitGame);
 document.getElementById('vampir-back-lobby').addEventListener('click', exitGame);
 
+let _vampirLastPhase = null;
 function renderVampir() {
   const gs = state.gameState;
   if (!gs) return;
+
+  // Faz değişikliklerinde ses
+  if (gs.phase !== _vampirLastPhase) {
+    if (gs.phase === 'night') SFX.vampirNight();
+    else if (gs.phase === 'dayDiscussion') SFX.vampirDay();
+    _vampirLastPhase = gs.phase;
+  }
 
   const me = state.players.find(p => p.id === state.you?.id);
   const isAlive = me?.alive !== false;
@@ -1308,6 +2253,7 @@ function setYilanBoost(on) {
   if (state.game !== 'yilan') return;
   if (yilanState.boostHeld === on) return;
   yilanState.boostHeld = on;
+  if (on) SFX.yilanBoostStart();
   socket.emit('yilan:boost', { on });
 }
 
@@ -1601,11 +2547,11 @@ function renderYilan() {
   // Lider tablosu — yılanları skoruna göre sırala
   const lb = document.getElementById('yilan-leaderboard-list');
   if (lb) {
-    const sorted = Object.values(yilanState.snakes).sort((a, b) => b.score - a.score).slice(0, 5);
-    lb.innerHTML = sorted.map(s => `
-      <li class="${s.alive ? '' : 'dead'} ${s.id === state.you?.id ? 'me' : ''}">
+    const entries = Object.entries(yilanState.snakes).sort(([,a], [,b]) => b.score - a.score).slice(0, 5);
+    lb.innerHTML = entries.map(([id, s]) => `
+      <li class="${s.alive ? '' : 'dead'} ${id === state.you?.id ? 'me' : ''}">
         <span class="dot" style="background:${s.color}"></span>
-        <span class="lb-name">${escapeHtml(s.name)}</span>
+        <span class="lb-name">${escapeHtml(s.name || '?')}</span>
         <span class="lb-score">${s.score}</span>
       </li>
     `).join('');
@@ -1649,6 +2595,31 @@ document.getElementById('amiral-rotate').addEventListener('click', () => {
   amiralState.orientation = amiralState.orientation === 'horizontal' ? 'vertical' : 'horizontal';
   updateCurrentShipLabel();
   updatePlacementVisuals();
+});
+
+// "Yerleştir" butonu — hoverCell pozisyonunda gemiyi koyar (mobil için kritik)
+document.getElementById('amiral-place-here').addEventListener('click', () => {
+  const idx = amiralState.currentShipIndex;
+  if (idx >= amiralState.shipSizes.length) {
+    showToast('Tüm gemiler yerleşti, Hazırım\'a bas!', '');
+    return;
+  }
+  if (!amiralState.hoverCell) {
+    showToast('Önce tahtada bir kareye dokun!', 'error');
+    return;
+  }
+  const { x, y } = amiralState.hoverCell;
+  const cells = getShipCells(x, y, amiralState.shipSizes[idx], amiralState.orientation);
+  if (canPlaceShip(cells)) {
+    amiralState.placedShips.push({ name: amiralState.shipNames[idx], cells });
+    amiralState.currentShipIndex++;
+    SFX.amiralPlace();
+    updateCurrentShipLabel();
+    updatePlacementVisuals();
+  } else {
+    SFX.error();
+    showToast('Buraya yerleştiremezsin!', 'error');
+  }
 });
 document.getElementById('amiral-restart').addEventListener('click', () => {
   amiralState.currentShipIndex = 0;
@@ -1835,6 +2806,7 @@ function buildShipCellMap(board) {
   return map;
 }
 
+let _amiralLastMoveKey = null;
 function renderAmiralBattle() {
   const gs = state.gameState;
   if (!gs) return;
@@ -1846,6 +2818,17 @@ function renderAmiralBattle() {
   const myBoard = gs.boards?.[myId];
   const opponentBoard = gs.boards?.[opponent];
   const lastMove = gs.lastMove;
+
+  // Ses efektleri: yeni hamle algıla
+  if (lastMove) {
+    const key = `${lastMove.shooter}-${lastMove.x}-${lastMove.y}`;
+    if (key !== _amiralLastMoveKey) {
+      _amiralLastMoveKey = key;
+      if (lastMove.sunkShip) SFX.amiralSunk();
+      else if (lastMove.hit) SFX.amiralHit();
+      else SFX.amiralMiss();
+    }
+  }
 
   // Sıra durumu
   const turnInfo = document.getElementById('amiral-opponent-turn');
@@ -1907,6 +2890,7 @@ function renderAmiralBattle() {
       } else if (isMyTurn && isParticipant) {
         cell.classList.add('targetable');
         cell.addEventListener('click', () => {
+          SFX.amiralShoot();
           socket.emit('amiral:shoot', { x, y });
         });
       } else {
@@ -2060,11 +3044,13 @@ document.getElementById('uno-exit').addEventListener('click', exitGame);
 document.getElementById('uno-back-lobby').addEventListener('click', exitGame);
 
 document.getElementById('uno-deck').addEventListener('click', () => {
+  SFX.unoDraw();
   socket.emit('uno:draw');
 });
 
 // UNO! butonu
 document.getElementById('uno-call-btn').addEventListener('click', () => {
+  SFX.unoCall();
   socket.emit('uno:call');
 });
 
@@ -2072,9 +3058,12 @@ document.getElementById('uno-call-btn').addEventListener('click', () => {
 document.querySelectorAll('.picker-color').forEach(btn => {
   btn.addEventListener('click', () => {
     if (unoState.pendingPlay !== null) {
-      socket.emit('uno:play', { 
-        cardIndex: unoState.pendingPlay.cardIndex, 
-        pickColor: btn.dataset.color 
+      const playingCard = unoState.myHand[unoState.pendingPlay.cardIndex];
+      if (playingCard?.value === '+4') SFX.unoPlus4();
+      else SFX.unoPlay();
+      socket.emit('uno:play', {
+        cardIndex: unoState.pendingPlay.cardIndex,
+        pickColor: btn.dataset.color
       });
       unoState.pendingPlay = null;
       document.getElementById('uno-color-picker').style.display = 'none';
@@ -2160,6 +3149,7 @@ function renderUno() {
   // Yakala butonları
   playersBar.querySelectorAll('.btn-uno-catch').forEach(btn => {
     btn.addEventListener('click', () => {
+      SFX.unoCatch();
       socket.emit('uno:catch', { targetId: btn.dataset.target });
     });
   });
@@ -2231,6 +3221,11 @@ function renderUno() {
           unoState.pendingPlay = { cardIndex: idx };
           document.getElementById('uno-color-picker').style.display = 'flex';
         } else {
+          // Karta göre ses
+          if (card.value === '+2') SFX.unoPlus2();
+          else if (card.value === 'donus') SFX.unoReverse();
+          else if (card.value === 'pas') SFX.unoSkip();
+          else SFX.unoPlay();
           socket.emit('uno:play', { cardIndex: idx });
         }
       });
@@ -2256,6 +3251,9 @@ function renderUno() {
 socket.on('room:joined', ({ code, you }) => {
   state.roomCode = code;
   state.you = you;
+  pendingJoin = null;
+  const pm = document.getElementById('password-modal');
+  if (pm) pm.style.display = 'none';
   showScreen('screen-lobby');
 });
 
@@ -2269,11 +3267,27 @@ socket.on('room:update', (data) => {
   state.game = data.game;
   state.gameState = data.gameState;
   state.settings = data.settings || state.settings;
+  state.lobbyChat = data.lobbyChat || [];
+
+  // Lobi sohbeti güncelle (lobby ekranındaysa)
+  renderLobbyChat();
 
   // Eliminated bilgisi gameState'ten geliyor
   if (data.gameState) {
     state.players = data.players;
   }
+
+  // Sıra bildirimi
+  checkMyTurnNotification(data);
+
+  // Oyun bitti tespit → konfeti + ses
+  checkGameOverCelebration(data);
+
+  // Host-only butonlar
+  updateHostOnlyVisibility();
+
+  // Ready panel (settings modal açıksa güncelle)
+  if (settingsModal.style.display !== 'none') renderReadyPanel();
 
   // Ayarlar modalı açıksa güncelle
   if (settingsModal && settingsModal.style.display === 'flex') {
@@ -2321,7 +3335,19 @@ socket.on('room:update', (data) => {
 });
 
 socket.on('room:error', ({ message }) => {
+  // Şifre yanlışsa modal'da inline göster (toast yok)
+  if (/şifre yanlış/i.test(message) && pendingJoin) {
+    const errEl = document.getElementById('password-error');
+    const pwInput = document.getElementById('join-password');
+    if (errEl) errEl.textContent = '❌ ' + message;
+    if (pwInput) { pwInput.value = ''; pwInput.focus(); }
+    return;
+  }
   showToast(message, 'error');
+});
+
+socket.on('game:countdown', () => {
+  showCountdown();
 });
 
 socket.on('kelime:timer', ({ timeLeft }) => {
@@ -2331,6 +3357,7 @@ socket.on('kelime:timer', ({ timeLeft }) => {
 });
 
 socket.on('kelime:error', ({ message }) => {
+  SFX.kelimeErr();
   const errEl = document.getElementById('kelime-error');
   if (errEl) {
     errEl.textContent = '❌ ' + message;
@@ -2343,14 +3370,17 @@ socket.on('kelime:skipped', ({ message }) => {
 });
 
 socket.on('kelime:letterChanged', ({ playerName, from, to }) => {
+  SFX.kelimeChange();
   showToast(`🔀 ${playerName} harfi değiştirdi: ${from} → ${to}`, '');
 });
 
 socket.on('kelime:passUsed', ({ playerName }) => {
+  SFX.kelimePass();
   showToast(`⏭️ ${playerName} pas geçti`, '');
 });
 
 socket.on('kelime:lifeLost', ({ playerName, livesLeft }) => {
+  SFX.kelimeLife();
   if (livesLeft > 0) {
     showToast(`💔 ${playerName} can kaybetti (${livesLeft} kaldı)`, '');
   } else {
@@ -2384,7 +3414,11 @@ socket.on('cizim:timer', ({ timeLeft }) => {
   if (el) el.textContent = timeLeft;
 });
 
-socket.on('cizim:reveal', ({ word }) => {
+socket.on('cizim:reveal', ({ word, summary }) => {
+  SFX.cizimReveal();
+  // Eğer ben doğru bildiysem ekstra ses
+  const me = summary?.find(s => s.id === state.you?.id);
+  if (me && me.guessed) setTimeout(() => SFX.cizimCorrect(), 150);
   // Tur sonu - canvas'ı temizle, yeni tur başlamadan önce
   setTimeout(() => {
     clearCanvas();
@@ -2394,6 +3428,7 @@ socket.on('cizim:reveal', ({ word }) => {
 
 // Kelime seçim seçenekleri (sadece çizene)
 socket.on('cizim:wordChoices', ({ words }) => {
+  SFX.notify();
   const modal = document.getElementById('cizim-word-select');
   if (!modal || !words || words.length < 2) return;
   document.getElementById('cizim-word-0').textContent = words[0];
@@ -2418,6 +3453,7 @@ socket.on('cizim:undo', ({ strokes }) => {
 });
 
 socket.on('cizim:hintRevealed', ({ level, hint }) => {
+  SFX.cizimHint();
   if (state.gameState) {
     state.gameState.hintLevel = level;
     state.gameState.wordHint = hint;
@@ -2435,6 +3471,8 @@ socket.on('trivia:timer', ({ timeLeft }) => {
   if (state.gameState) state.gameState.timeLeft = timeLeft;
   const el = document.getElementById('trivia-timer');
   if (el) el.textContent = timeLeft;
+  // Son 3 saniyede tick
+  if (timeLeft > 0 && timeLeft <= 3 && state.gameState?.phase === 'question') SFX.triviaTick();
 });
 
 socket.on('trivia:answerCount', ({ count, total }) => {
@@ -2445,6 +3483,7 @@ socket.on('trivia:answerCount', ({ count, total }) => {
 });
 
 socket.on('trivia:fiftyResult', ({ eliminated }) => {
+  SFX.triviaFifty();
   triviaFiftyEliminated = eliminated || [];
   renderTrivia();
   showToast('50:50 kullanıldı — 2 yanlış şık elendi', '');
@@ -2501,7 +3540,52 @@ socket.on('vampir:timer', ({ timeLeft }) => {
 });
 
 // --- YILAN SAVAŞI ---
+let _yilanLastScore = 0;
+let _yilanWasAlive = true;
 socket.on('yilan:tick', ({ snakes, foods, timeLeft }) => {
+  // Ses tespiti: kendi skorum arttıysa yedim, alive→dead olduysam öldüm
+  const me = snakes[state.you?.id];
+  if (me) {
+    if (me.score > _yilanLastScore) {
+      const diff = me.score - _yilanLastScore;
+      if (diff >= 5) SFX.yilanEatLarge();
+      else if (diff >= 3) SFX.yilanEatMed();
+      else SFX.yilanEat();
+    }
+    if (_yilanWasAlive && !me.alive) {
+      SFX.yilanDeath();
+      // Ölüm overlay'i ve statüsünü doğrudan güncelle (room:update beklemeden)
+      const deathOv = document.getElementById('yilan-death-overlay');
+      if (deathOv) deathOv.style.display = '';
+      const statusEl = document.getElementById('yilan-status');
+      if (statusEl) statusEl.textContent = '💀 Öldün — başkalarını izle';
+    }
+    // Yeniden canlanma (örn. tekrar oyna) durumunda overlay'i kapat
+    if (!_yilanWasAlive && me.alive) {
+      const deathOv = document.getElementById('yilan-death-overlay');
+      if (deathOv) deathOv.style.display = 'none';
+    }
+    _yilanLastScore = me.score;
+    _yilanWasAlive = me.alive;
+
+    // Self stat anlık güncelle
+    const selfLen = document.getElementById('yilan-self-len');
+    const selfScore = document.getElementById('yilan-self-score');
+    if (selfLen) selfLen.textContent = `Uzunluk: ${me?.body?.length || 0}`;
+    if (selfScore) selfScore.textContent = `Skor: ${me?.score || 0}`;
+  }
+  // Lider tablosu anlık güncelle
+  const lb = document.getElementById('yilan-leaderboard-list');
+  if (lb) {
+    const entries = Object.entries(snakes).sort(([,a], [,b]) => b.score - a.score).slice(0, 5);
+    lb.innerHTML = entries.map(([id, s]) => `
+      <li class="${s.alive ? '' : 'dead'} ${id === state.you?.id ? 'me' : ''}">
+        <span class="dot" style="background:${s.color}"></span>
+        <span class="lb-name">${escapeHtml(s.name || '?')}</span>
+        <span class="lb-score">${s.score}</span>
+      </li>
+    `).join('');
+  }
   yilanState.snakes = snakes;
   yilanState.foods = foods;
   if (state.gameState) {

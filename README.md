@@ -172,7 +172,32 @@ C: 2'den az kişi kalırsa oyun otomatik durur, herkes lobiye döner.
 C: O kişinin oda bağlantısı kopar, tekrar kodla katılması gerekir.
 
 **S: Render uyandıktan sonra ilk girene neden 30-50 sn bekletiyor?**  
-C: Ücretsiz plan özelliği. Üst plana geçince düzelir.
+C: Ücretsiz plan özelliği. **Keep-alive** ile çözebilirsin (aşağı bak).
+
+---
+
+## 🔄 Render Keep-Alive (15dk uyku engelleme)
+
+Render ücretsiz plan 15dk hareketsizlikten sonra sunucuyu uyutur. 3 çözüm:
+
+### Yöntem 1: Sunucu kendisine ping atar (kolay)
+Render dashboard → Settings → **Environment** → env var ekle:
+```
+KEEP_ALIVE_URL = https://SENIN_UYGULAMA_ADIN.onrender.com/ping
+```
+Sunucu her 10 dakikada bir kendine HTTP GET atar → uyumaz.
+
+### Yöntem 2: Harici cron (cron-job.org)
+1. cron-job.org → ücretsiz hesap aç
+2. Yeni cron: URL = `https://SENIN_UYGULAMA.onrender.com/ping`, interval = 10dk
+
+### Yöntem 3: UptimeRobot
+uptimerobot.com ücretsiz: 5dk aralıkla ping atar, hem uyku engeller hem uptime izler.
+
+`/ping` endpoint döner:
+```json
+{ "ok": true, "uptime": 1234, "rooms": 3, "ts": 1730000000000 }
+```
 
 ---
 

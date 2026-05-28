@@ -34,15 +34,30 @@
       <div class="home-actions">
         <div class="card-action">
           <h2>✨ Yeni Oda Aç</h2>
-          <input type="text" id="create-name" placeholder="Adın..." maxlength="20" />
+          <input type="text" id="create-name" placeholder="Adın (boş = rastgele)" maxlength="20" />
+          <input type="password" id="create-password" placeholder="🔒 Şifre (opsiyonel)" maxlength="20" />
           <button class="btn btn-primary" id="btn-create">Oda Oluştur</button>
         </div>
 
         <div class="card-action">
           <h2>🚪 Odaya Katıl</h2>
-          <input type="text" id="join-name" placeholder="Adın..." maxlength="20" />
+          <input type="text" id="join-name" placeholder="Adın (boş = rastgele)" maxlength="20" />
           <input type="text" id="join-code" placeholder="ODA KODU" maxlength="4" />
           <button class="btn btn-secondary" id="btn-join">Katıl</button>
+        </div>
+      </div>
+
+      <!-- Şifre modal -->
+      <div class="password-modal" id="password-modal" style="display:none">
+        <div class="password-card">
+          <h3>🔒 Bu oda şifreli</h3>
+          <p>Katılmak için şifreyi gir.</p>
+          <input type="password" id="join-password" placeholder="Şifre" maxlength="20" />
+          <p class="password-error" id="password-error"></p>
+          <div class="password-actions">
+            <button class="btn btn-ghost btn-sm" id="password-cancel">İptal</button>
+            <button class="btn btn-primary btn-sm" id="password-ok">Katıl</button>
+          </div>
         </div>
       </div>
 
@@ -67,10 +82,28 @@
         <div class="room-code-display">
           <span class="label">ODA KODU</span>
           <span class="code" id="room-code">----</span>
-          <button class="btn-copy" id="btn-copy-code" title="Kopyala">📋</button>
+          <button class="btn-copy" id="btn-copy-code" title="Kodu kopyala">📋</button>
+          <button class="btn-copy" id="btn-copy-link" title="Davet linkini kopyala">🔗</button>
+          <button class="btn-copy" id="btn-show-qr" title="QR kod">📱</button>
         </div>
         <div class="lobby-header-actions">
           <button class="btn btn-ghost" id="btn-leave">Ayrıl</button>
+        </div>
+      </div>
+
+      <!-- QR kod modali -->
+      <div class="qr-modal" id="qr-modal" style="display:none">
+        <div class="qr-card">
+          <h3>📱 QR Kod ile Katıl</h3>
+          <p>Arkadaşın bunu telefonuyla taratabilir.</p>
+          <div class="qr-img-wrap">
+            <img id="qr-image" alt="QR kod" />
+          </div>
+          <p class="qr-url" id="qr-url">-</p>
+          <div class="qr-actions">
+            <button class="btn btn-secondary btn-sm" id="qr-copy-link">🔗 Linki Kopyala</button>
+            <button class="btn btn-primary btn-sm" id="qr-close">Kapat</button>
+          </div>
         </div>
       </div>
 
@@ -79,6 +112,21 @@
           <h2>Oyuncular <span class="badge" id="player-count">0</span></h2>
           <ul class="players-list" id="players-list"></ul>
           <p class="hint" id="lobby-hint">Arkadaşlarına oda kodunu paylaş!</p>
+
+          <!-- Hazırım butonu (non-host'a görünür) -->
+          <button class="btn btn-secondary btn-lobby-ready" id="lobby-ready-btn" style="display:none">✋ Hazırım</button>
+
+          <!-- Lobi sohbeti -->
+          <div class="lobby-chat-panel">
+            <h3 class="lobby-chat-title">💬 Sohbet</h3>
+            <div class="lobby-chat-list" id="lobby-chat-list">
+              <p class="lobby-chat-empty">Henüz mesaj yok. İlk sen yaz!</p>
+            </div>
+            <div class="lobby-chat-input-row">
+              <input type="text" id="lobby-chat-input" placeholder="Mesaj..." maxlength="200" />
+              <button class="btn btn-primary btn-sm" id="lobby-chat-send">Gönder</button>
+            </div>
+          </div>
         </div>
 
         <div class="games-panel">
@@ -198,7 +246,10 @@
         <div class="game-over-card">
           <h2>🏆 Oyun Bitti!</h2>
           <p>Son ayakta kalan: <strong id="kelime-winner">-</strong></p>
-          <button class="btn btn-primary" id="kelime-back-lobby">Lobiye Dön</button>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="kelime-back-lobby">Lobiye Dön</button>
+          </div>
         </div>
       </div>
     </section>
@@ -230,7 +281,10 @@
         <div class="game-over-card">
           <h2>🏆 Oyun Bitti!</h2>
           <p>Kazanan: <strong id="hafiza-winner">-</strong></p>
-          <button class="btn btn-primary" id="hafiza-back-lobby">Lobiye Dön</button>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="hafiza-back-lobby">Lobiye Dön</button>
+          </div>
         </div>
       </div>
     </section>
@@ -323,7 +377,10 @@
         <div class="game-over-card">
           <h2>🏆 Oyun Bitti!</h2>
           <p>Kazanan: <strong id="cizim-winner">-</strong></p>
-          <button class="btn btn-primary" id="cizim-back-lobby">Lobiye Dön</button>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="cizim-back-lobby">Lobiye Dön</button>
+          </div>
         </div>
       </div>
     </section>
@@ -363,7 +420,10 @@
           <h2>🏆 Oyun Bitti!</h2>
           <p>Kazanan: <strong id="trivia-winner">-</strong></p>
           <div id="trivia-final-scores"></div>
-          <button class="btn btn-primary" id="trivia-back-lobby">Lobiye Dön</button>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="trivia-back-lobby">Lobiye Dön</button>
+          </div>
         </div>
       </div>
     </section>
@@ -412,7 +472,10 @@
           <h2 id="vampir-winner-title">🏆 Oyun Bitti!</h2>
           <p id="vampir-winner-msg">-</p>
           <div id="vampir-roles-reveal"></div>
-          <button class="btn btn-primary" id="vampir-back-lobby">Lobiye Dön</button>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="vampir-back-lobby">Lobiye Dön</button>
+          </div>
         </div>
       </div>
     </section>
@@ -469,7 +532,10 @@
           <h2>🏆 Oyun Bitti!</h2>
           <p>Kazanan: <strong id="yilan-winner">-</strong></p>
           <div id="yilan-final-scores"></div>
-          <button class="btn btn-primary" id="yilan-back-lobby">Lobiye Dön</button>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="yilan-back-lobby">Lobiye Dön</button>
+          </div>
         </div>
       </div>
     </section>
@@ -490,10 +556,12 @@
         </p>
         <div class="amiral-place-controls">
           <div class="amiral-current-ship" id="amiral-current-ship">4'lü gemi (yatay)</div>
-          <button class="btn btn-secondary btn-sm" id="amiral-rotate">↻ Döndür</button>
+          <button class="btn btn-secondary btn-sm" id="amiral-rotate">↻ Döndür (R)</button>
+          <button class="btn btn-primary btn-sm" id="amiral-place-here">📍 Yerleştir</button>
           <button class="btn btn-ghost btn-sm" id="amiral-restart">⟲ Baştan Başla</button>
-          <button class="btn btn-primary btn-sm" id="amiral-confirm" style="display:none">Hazırım!</button>
+          <button class="btn btn-primary btn-sm" id="amiral-confirm" style="display:none">✅ Hazırım!</button>
         </div>
+        <p class="amiral-mobile-hint">📱 Mobil: bir kareye dokun → <strong>"Yerleştir"</strong>e bas</p>
         <div class="amiral-board-frame">
           <div class="coord-row coord-top">
             <span></span>
@@ -558,7 +626,10 @@
         <div class="game-over-card">
           <h2>🏆 Oyun Bitti!</h2>
           <p>Kazanan: <strong id="amiral-winner">-</strong></p>
-          <button class="btn btn-primary" id="amiral-back-lobby">Lobiye Dön</button>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="amiral-back-lobby">Lobiye Dön</button>
+          </div>
         </div>
       </div>
     </section>
@@ -621,7 +692,10 @@
         <div class="game-over-card">
           <h2>🏆 Oyun Bitti!</h2>
           <p>Kazanan: <strong id="uno-winner">-</strong></p>
-          <button class="btn btn-primary" id="uno-back-lobby">Lobiye Dön</button>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="uno-back-lobby">Lobiye Dön</button>
+          </div>
         </div>
       </div>
     </section>
@@ -836,12 +910,152 @@
         <p>Bu oyunun ayarı yok. Klasik kurallarla oynanır.</p>
       </div>
 
+      <!-- Hazır durumu paneli -->
+      <div class="ready-panel" id="ready-panel">
+        <div class="ready-row" id="ready-row"></div>
+      </div>
+
       <div class="settings-footer">
         <button class="btn btn-ghost" id="settings-cancel">İptal</button>
-        <button class="btn btn-primary" id="settings-start">▶ Oyunu Başlat</button>
+        <button class="btn btn-secondary" id="settings-ready-btn" style="display:none">✋ Hazırım</button>
+        <button class="btn btn-primary" id="settings-start">▶ Başlat</button>
       </div>
     </div>
   </div>
+
+  <!-- Sağ üst köşe — yardım, ses, tema, tam ekran -->
+  <div class="topbar-tools" id="topbar-tools">
+    <button class="topbar-btn" id="help-toggle" title="Yardım (? tuşu)">❓</button>
+    <button class="topbar-btn" id="sound-toggle" title="Ses">🔊</button>
+    <button class="topbar-btn" id="theme-toggle" title="Tema değiştir">🎨</button>
+    <button class="topbar-btn" id="fullscreen-toggle" title="Tam ekran" style="display:none">⛶</button>
+  </div>
+
+  <!-- Yardım/SSS + klavye kısayolları modali -->
+  <div class="help-modal" id="help-modal" style="display:none">
+    <div class="help-card">
+      <div class="help-header">
+        <h2>📖 Yardım & Kısayollar</h2>
+        <button class="settings-close" id="help-close">✕</button>
+      </div>
+
+      <div class="help-tabs">
+        <button class="help-tab active" data-htab="rules">🎮 Oyun Kuralları</button>
+        <button class="help-tab" data-htab="keys">⌨️ Klavye Kısayolları</button>
+        <button class="help-tab" data-htab="about">ℹ️ Hakkında</button>
+      </div>
+
+      <div class="help-body">
+        <!-- KURALLAR -->
+        <div class="help-pane active" data-hpane="rules">
+          <details open>
+            <summary>🔤 Kelime Zinciri</summary>
+            <p>Sıradaki oyuncu, önceki kelimenin son harfiyle başlayan yeni bir kelime yazar. Süre dolarsa veya kelime geçersizse can kaybedersin. Son ayakta kalan kazanır. Kategoriler, kafiye modu, pas hakkı ve harf değiş hakkı ayarlardan açılabilir.</p>
+          </details>
+          <details>
+            <summary>🧠 Hafıza Oyunu</summary>
+            <p>Eşleşen kart çiftlerini bulmaya çalış. Eşleşme bulursan tekrar oynarsın, bulamazsan sıra geçer. En çok çift bulan kazanır. Tema seti ayardan değişir.</p>
+          </details>
+          <details>
+            <summary>🎨 Çizim-Tahmin</summary>
+            <p>Çizen, 2 kelime arasından birini seçer ve çizer. Diğerleri tahmin eder. İlk doğru bilen ekstra puan alır. Çizen 2 ipucu açabilir (harf sayısı, baş harf) ama her ipucu puanı azaltır.</p>
+          </details>
+          <details>
+            <summary>🎯 Trivia</summary>
+            <p>Bilgi yarışması. Hızlı doğru cevap = çok puan. Üst üste doğru cevap = streak bonusu (max +10). 50:50 jokeri 2 yanlış şıkkı eler (her oyuncuya 1 hak).</p>
+          </details>
+          <details>
+            <summary>🧛 Vampir Köylü</summary>
+            <p>Gece vampirler birini öldürür, doktor birini korur, dedektif birini sorgular. Gündüz tartışıp şüpheliyi oylayarak idam edersin. Cadı (2 iksir) ve Soytarı (idam edilirse kazanır) opsiyonel.</p>
+          </details>
+          <details>
+            <summary>🐍 Yılan Savaşı</summary>
+            <p>Arenada yılanını büyütüp diğerlerine çarptır. Yem yedikçe büyürsün (küçük/orta/büyük). Shift basılı tutarak boost — hız 2x ama segment kaybedersin. Ölünce gövden başkalarına yem olur.</p>
+          </details>
+          <details>
+            <summary>⚓ Amiral Battı</summary>
+            <p>Önce gemilerini yerleştir (4lü, 3lü×2, 2li×2). R ile döndür. Mobilde "Yerleştir" butonu. Sırayla rakibin tahtasına atış yap. Tüm gemilerini batıran kazanır.</p>
+          </details>
+          <details>
+            <summary>🃏 Uno Benzeri</summary>
+            <p>Elindeki kartlardan ilk kurtulan kazanır. Aynı renk veya aynı sayı oynayabilirsin. +2 ve +4 üst üste binebilir. 1 kart kalınca 5sn içinde "UNO!" demezsen rakipler seni yakalayıp +2 ceza verir.</p>
+          </details>
+        </div>
+
+        <!-- KLAVYE KISAYOLLARI -->
+        <div class="help-pane" data-hpane="keys">
+          <div class="kbd-section">
+            <h4>Genel</h4>
+            <p><span class="kbd">?</span> <span class="kbd">F1</span> — Bu yardım menüsünü aç</p>
+            <p><span class="kbd">Esc</span> — Açık modali kapat</p>
+            <p><span class="kbd">Enter</span> — Aktif input gönder</p>
+          </div>
+          <div class="kbd-section">
+            <h4>🔤 Kelime Zinciri</h4>
+            <p><span class="kbd">Enter</span> — Kelimeyi gönder</p>
+          </div>
+          <div class="kbd-section">
+            <h4>⚓ Amiral Battı (Yerleştirme)</h4>
+            <p><span class="kbd">R</span> — Gemiyi döndür</p>
+          </div>
+          <div class="kbd-section">
+            <h4>🐍 Yılan Savaşı</h4>
+            <p><span class="kbd">W</span> <span class="kbd">A</span> <span class="kbd">S</span> <span class="kbd">D</span> veya <span class="kbd">↑</span><span class="kbd">←</span><span class="kbd">↓</span><span class="kbd">→</span> — Hareket</p>
+            <p><span class="kbd">Shift</span> (basılı tut) — Boost</p>
+          </div>
+          <div class="kbd-section">
+            <h4>🎯 Trivia</h4>
+            <p><span class="kbd">1</span> <span class="kbd">2</span> <span class="kbd">3</span> <span class="kbd">4</span> — Şık seç</p>
+          </div>
+        </div>
+
+        <!-- HAKKINDA -->
+        <div class="help-pane" data-hpane="about">
+          <p><strong>Arkadaşlarla Oynamalık</strong> — 8 oyunluk multiplayer web platformu</p>
+          <p>Tamamen ücretsiz, hesap açmana gerek yok. Oda kodu veya davet linkiyle anında katıl.</p>
+          <p><strong>Özellikler:</strong></p>
+          <ul style="margin-left:24px;line-height:1.8">
+            <li>🎮 8 farklı oyun, hepsi 2-12 oyuncu</li>
+            <li>🐾 Hayvan avatarlı oyuncu sistemi</li>
+            <li>💬 Lobi sohbeti, hızlı emoji tepkiler</li>
+            <li>🎨 3 tema (Pembe, Karanlık, Pastel)</li>
+            <li>🔊 Tüm oyunlarda özel ses efektleri</li>
+            <li>🎊 Kazanma anında konfeti</li>
+            <li>📱 Tam mobil destek</li>
+            <li>🔒 Şifreli oda + davet linki/QR</li>
+          </ul>
+          <p style="margin-top:16px;color:var(--color-text-light);font-size:0.85rem">Açık kaynak. Render.com üzerinde host ediliyor.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tema seçim mini popup -->
+  <div class="theme-picker" id="theme-picker" style="display:none">
+    <button class="theme-opt" data-theme="pembe"><span class="dot" style="background:#ff3e8a"></span>Pembe</button>
+    <button class="theme-opt" data-theme="karanlik"><span class="dot" style="background:#050510;border:2px solid #fff"></span>Karanlık</button>
+    <button class="theme-opt" data-theme="pastel"><span class="dot" style="background:#ffa3c4"></span>Pastel</button>
+  </div>
+
+  <!-- Hızlı tepki barı (sadece oyun ekranlarında görünür) -->
+  <div class="reaction-bar" id="reaction-bar" style="display:none">
+    <button class="reaction-btn" data-emoji="😄" title="Eğlenceli">😄</button>
+    <button class="reaction-btn" data-emoji="🔥" title="Süper">🔥</button>
+    <button class="reaction-btn" data-emoji="👏" title="Alkış">👏</button>
+    <button class="reaction-btn" data-emoji="❤️" title="Sevdim">❤️</button>
+    <button class="reaction-btn" data-emoji="😱" title="Şok">😱</button>
+  </div>
+
+  <!-- Reaction emojileri için ayrı katman (avatar üstünde float) -->
+  <div class="reaction-layer" id="reaction-layer"></div>
+
+  <!-- 3-2-1 geri sayım overlay -->
+  <div class="countdown-overlay" id="countdown-overlay" style="display:none">
+    <div class="countdown-number" id="countdown-number">3</div>
+  </div>
+
+  <!-- Konfeti canvas -->
+  <canvas id="confetti-canvas" class="confetti-canvas"></canvas>
 
   <!-- Toast bildirimleri -->
   <div id="toast" class="toast"></div>
