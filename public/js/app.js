@@ -288,6 +288,25 @@ const SFX = (() => {
     amiralSunk:  () => { noise(0.6, 0.7, 400); setTimeout(() => sweep(180, 50, 0.5, 'sawtooth', 0.5), 100); setTimeout(() => arpeggio([196, 165, 131], 0.1, 'sawtooth', 0.35), 350); },
     amiralPlace: () => tone(600, 0.06, 'square', 0.25),
 
+    // Codenames
+    cnClue:       () => arpeggio([523, 659, 784], 0.07, 'triangle', 0.4),
+    cnCardRed:    () => tone(440, 0.18, 'sawtooth', 0.35),
+    cnCardBlue:   () => tone(523, 0.18, 'triangle', 0.35),
+    cnCardCivil:  () => tone(330, 0.2, 'sine', 0.3),
+    cnAssassin:   () => { sweep(440, 80, 0.5, 'sawtooth', 0.5); setTimeout(() => noise(0.3, 0.3, 600), 100); },
+    cnWin:        () => arpeggio([523, 659, 784, 1047, 1319], 0.08, 'triangle', 0.5),
+
+    // Şehir-İsim-Hayvan
+    sihSubmit:    () => arpeggio([523, 659, 784], 0.06, 'triangle', 0.35),
+    sihRoundEnd:  () => arpeggio([880, 1100, 1320], 0.08, 'sine', 0.4),
+    sihNewLetter: () => tone(660, 0.18, 'sine', 0.35),
+
+    // Emoji Tahmin
+    emojiCorrect: () => arpeggio([659, 880, 1175], 0.07, 'triangle', 0.45),
+    emojiWrong:   () => tone(220, 0.12, 'sawtooth', 0.25),
+    emojiReveal:  () => arpeggio([523, 392], 0.15, 'sine', 0.35),
+    emojiFirst:   () => arpeggio([784, 988, 1175, 1568], 0.06, 'square', 0.5),
+
     // Uno
     unoPlay:   () => tone(750, 0.07, 'square', 0.3),
     unoDraw:   () => sweep(550, 330, 0.15, 'triangle', 0.3),
@@ -949,8 +968,12 @@ const GAME_INFO = {
   'trivia':         { tab: 'trivia', icon: '🎯', name: 'Trivia' },
   'vampir':         { tab: 'vampir', icon: '🧛', name: 'Vampir Köylü' },
   'yilan':          { tab: 'yilan',  icon: '🐍', name: 'Yılan Savaşı' },
-  'amiral':         { tab: null,     icon: '⚓', name: 'Amiral Battı' }, // ayar yok
-  'uno':            { tab: 'uno',    icon: '🃏', name: 'Uno Benzeri' }
+  'amiral':         { tab: null,     icon: '⚓', name: 'Amiral Battı' },
+  'uno':            { tab: 'uno',    icon: '🃏', name: 'Uno Benzeri' },
+  'sih':            { tab: 'sih',    icon: '🏙️', name: 'Şehir-İsim-Hayvan' },
+  'emoji':          { tab: 'emoji',  icon: '🎭', name: 'Emoji Tahmin' },
+  'codenames':      { tab: 'codenames', icon: '🕵️', name: 'Codenames TR' },
+  'syarisi':        { tab: 'syarisi', icon: '🏙️', name: 'Şehir Yarışı' }
 };
 
 function closeSettings() {
@@ -1076,6 +1099,21 @@ document.querySelectorAll('.settings-tab').forEach(tab => {
   });
 });
 
+// SİH kategori checkbox grid'i — değişince array gönder
+document.getElementById('set-sih-categories')?.addEventListener('change', () => {
+  if (isSettingsBuilding) return;
+  if (state.you?.id !== state.host) return;
+  const grid = document.getElementById('set-sih-categories');
+  const active = [...grid.querySelectorAll('input[type="checkbox"]:checked')].map(cb => cb.value);
+  if (active.length === 0) {
+    showToast('En az 1 kategori seçilmeli!', 'error');
+    // Geri yükle
+    applySettingsToUI();
+    return;
+  }
+  socket.emit('room:settings', { gameType: 'sih', settings: { activeCategories: active } });
+});
+
 // Slider/checkbox/select değişimleri - sunucuya yolla
 document.querySelectorAll('.settings-pane input[type="range"], .settings-pane input[type="checkbox"], .settings-pane select').forEach(input => {
   const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
@@ -1118,16 +1156,28 @@ function applySettingsToUI() {
     const cfg = state.settings[game];
     for (const key in cfg) {
       const input = document.getElementById(`set-${game}-${key}`);
-      if (!input) continue;
-      if (input.type === 'checkbox') {
-        input.checked = !!cfg[key];
-      } else if (input.tagName === 'SELECT') {
-        input.value = cfg[key];
-      } else {
-        input.value = cfg[key];
-        const valEl = document.getElementById(`set-${game}-${key}-val`);
-        if (valEl) valEl.textContent = cfg[key];
+      if (input) {
+        if (input.type === 'checkbox') {
+          input.checked = !!cfg[key];
+        } else if (input.tagName === 'SELECT') {
+          input.value = cfg[key];
+        } else {
+          input.value = cfg[key];
+          const valEl = document.getElementById(`set-${game}-${key}-val`);
+          if (valEl) valEl.textContent = cfg[key];
+        }
       }
+    }
+  }
+
+  // SİH aktif kategoriler (özel multi-checkbox)
+  if (state.settings.sih) {
+    const grid = document.getElementById('set-sih-categories');
+    if (grid) {
+      const active = state.settings.sih.activeCategories || [];
+      grid.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.checked = active.includes(cb.value);
+      });
     }
   }
   
@@ -3246,6 +3296,517 @@ function renderUno() {
 }
 
 // ============================================================
+// ŞEHİR-İSİM-HAYVAN ARAYÜZÜ
+// ============================================================
+const SIH_CAT_LABELS = {
+  hayvan: { label: 'Hayvan', icon: '🦁' },
+  isim:   { label: 'İsim',   icon: '👤' },
+  sehir:  { label: 'Şehir',  icon: '🏙️' },
+  ulke:   { label: 'Ülke',   icon: '🌍' },
+  yemek:  { label: 'Yemek',  icon: '🍕' },
+  bitki:  { label: 'Bitki',  icon: '🌿' },
+  esya:   { label: 'Eşya',   icon: '🪑' },
+  renk:   { label: 'Renk',   icon: '🎨' },
+  marka:  { label: 'Marka',  icon: '🚗' }
+};
+
+document.getElementById('sih-exit')?.addEventListener('click', exitGame);
+document.getElementById('sih-back-lobby')?.addEventListener('click', exitGame);
+
+document.getElementById('sih-submit-btn')?.addEventListener('click', () => {
+  const gs = state.gameState;
+  if (!gs || gs.phase !== 'writing') return;
+  const answers = {};
+  gs.activeCategories.forEach(cat => {
+    const inp = document.getElementById(`sih-input-${cat}`);
+    answers[cat] = inp ? inp.value : '';
+  });
+  socket.emit('sih:submit', { answers });
+  SFX.sihSubmit();
+});
+
+// SİH faz değişim sesleri
+let _sihLastPhase = null;
+let _sihLastLetter = null;
+function _sihTrackSounds(gs) {
+  if (!gs) return;
+  if (gs.phase !== _sihLastPhase) {
+    if (gs.phase === 'scoring') SFX.sihRoundEnd();
+    _sihLastPhase = gs.phase;
+  }
+  if (gs.currentLetter && gs.currentLetter !== _sihLastLetter) {
+    if (_sihLastLetter !== null) SFX.sihNewLetter(); // ilk turda çalmasın
+    _sihLastLetter = gs.currentLetter;
+  }
+}
+
+function renderSih() {
+  const gs = state.gameState;
+  if (!gs) return;
+  _sihTrackSounds(gs);
+
+  document.getElementById('sih-round').textContent = `${gs.roundIndex || 0}/${gs.roundCount}`;
+  document.getElementById('sih-timer').textContent = gs.timeLeft || 0;
+  document.getElementById('sih-letter').textContent = gs.currentLetter ? gs.currentLetter.toUpperCase() : '?';
+
+  const letterPickDiv = document.getElementById('sih-letter-pick');
+  const writingDiv = document.getElementById('sih-writing');
+  const resultsDiv = document.getElementById('sih-results');
+  const submittedMsg = document.getElementById('sih-submitted-msg');
+
+  // Faza göre paneller
+  if (gs.phase === 'letterPick') {
+    letterPickDiv.style.display = '';
+    writingDiv.style.display = 'none';
+    resultsDiv.style.display = 'none';
+    // Harf grid
+    const grid = document.getElementById('sih-letter-grid');
+    const letters = ['a','b','c','ç','d','e','f','g','h','ı','i','j','k','l','m','n','o','ö','p','r','s','ş','t','u','ü','v','y','z'];
+    const isHost = state.you?.id === state.host;
+    grid.innerHTML = letters.map(l => {
+      const disabled = !isHost;
+      return `<button class="sih-letter-btn" data-letter="${l}" ${disabled ? 'disabled' : ''}>${l.toUpperCase()}</button>`;
+    }).join('');
+    grid.querySelectorAll('.sih-letter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        socket.emit('sih:pickLetter', { letter: btn.dataset.letter });
+      });
+    });
+  } else if (gs.phase === 'writing') {
+    letterPickDiv.style.display = 'none';
+    writingDiv.style.display = '';
+    resultsDiv.style.display = 'none';
+
+    const catsDiv = document.getElementById('sih-cats');
+    const meSubmitted = gs.submitted && gs.submitted[state.you?.id];
+    // Sadece ilk kez render et veya kategori değişimi varsa
+    if (!catsDiv.dataset.builtFor || catsDiv.dataset.builtFor !== (gs.currentLetter + '|' + gs.activeCategories.join(','))) {
+      catsDiv.innerHTML = gs.activeCategories.map(cat => {
+        const info = SIH_CAT_LABELS[cat] || { label: cat, icon: '❓' };
+        return `
+          <div class="sih-cat-row">
+            <label class="sih-cat-label">${info.icon} ${info.label}</label>
+            <input type="text" class="sih-cat-input" id="sih-input-${cat}" maxlength="40" autocomplete="off"
+                   placeholder="${(gs.currentLetter || '').toUpperCase()} ile başlayan ${info.label.toLowerCase()}..." />
+          </div>
+        `;
+      }).join('');
+      catsDiv.dataset.builtFor = gs.currentLetter + '|' + gs.activeCategories.join(',');
+      // İlk input'a fokuslan
+      const firstInput = catsDiv.querySelector('input');
+      if (firstInput) setTimeout(() => firstInput.focus(), 100);
+    }
+
+    // Kilit
+    catsDiv.querySelectorAll('input').forEach(i => { i.disabled = !!meSubmitted; });
+    document.getElementById('sih-submit-btn').disabled = !!meSubmitted;
+    submittedMsg.style.display = meSubmitted ? '' : 'none';
+  } else if (gs.phase === 'scoring' || gs.lastRoundResults) {
+    letterPickDiv.style.display = 'none';
+    writingDiv.style.display = 'none';
+    resultsDiv.style.display = '';
+
+    if (gs.lastRoundResults) {
+      const r = gs.lastRoundResults;
+      document.getElementById('sih-results-letter').textContent = r.letter ? r.letter.toUpperCase() : '?';
+      const table = document.getElementById('sih-results-table');
+      // Oyuncu satırları + kategori sütunları
+      const players = state.players;
+      let html = '<table class="sih-table"><thead><tr><th>Oyuncu</th>';
+      for (const cat of r.categories) {
+        html += `<th>${(SIH_CAT_LABELS[cat]?.icon || '?')}</th>`;
+      }
+      html += '<th>Tur Pts</th></tr></thead><tbody>';
+      players.forEach(p => {
+        const ps = r.scoresByPlayer[p.id];
+        if (!ps) return;
+        html += `<tr><td>${avatarHTML(p, 'sm')} ${escapeHtml(p.name)}</td>`;
+        for (const cat of r.categories) {
+          const ans = (state.gameState.answers?.[p.id]?.[cat]) || '-';
+          const pts = ps.perCat[cat] || 0;
+          html += `<td class="${pts > 0 ? 'has-pts' : ''}">${escapeHtml(ans)}${pts > 0 ? `<br><small>+${pts}</small>` : ''}</td>`;
+        }
+        html += `<td class="round-total">+${ps.total}${ps.fullBonus ? ' 🌟' : ''}</td></tr>`;
+      });
+      html += '</tbody></table>';
+      table.innerHTML = html;
+    }
+  }
+
+  // Skor tablosu
+  renderScoreboard('sih-scoreboard', -1);
+
+  // Oyun bitti
+  const gameOverEl = document.getElementById('sih-gameover');
+  if (gs.gameOver) {
+    document.getElementById('sih-winner').textContent = gs.winner || '-';
+    gameOverEl.style.display = 'flex';
+  } else {
+    gameOverEl.style.display = 'none';
+  }
+}
+
+socket.on('sih:timer', ({ timeLeft }) => {
+  if (state.gameState) state.gameState.timeLeft = timeLeft;
+  const el = document.getElementById('sih-timer');
+  if (el) el.textContent = timeLeft;
+  if (timeLeft > 0 && timeLeft <= 5) SFX.triviaTick();
+});
+
+// ============================================================
+// CODENAMES TR ARAYÜZÜ
+// ============================================================
+document.getElementById('cn-exit')?.addEventListener('click', exitGame);
+document.getElementById('cn-back-lobby')?.addEventListener('click', exitGame);
+
+// Setup ekranı butonları
+document.querySelectorAll('.cn-join-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const team = btn.dataset.team;
+    socket.emit('codenames:joinTeam', { team });
+    SFX.click();
+  });
+});
+document.querySelectorAll('.cn-role-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    socket.emit('codenames:setRole', { role: 'spymaster' });
+    SFX.click();
+  });
+});
+document.getElementById('cn-start-game')?.addEventListener('click', () => {
+  socket.emit('codenames:beginRound');
+  SFX.click();
+});
+
+let _cnLastRevealedCount = 0;
+let _cnLastPhase = null;
+function renderCodenames() {
+  const gs = state.gameState;
+  if (!gs) return;
+  const me = state.players.find(p => p.id === state.you?.id);
+
+  // Ses tetikleyiciler — yeni kart açıldı mı?
+  if (gs.board) {
+    const revealedCount = gs.board.filter(c => c.revealed).length;
+    if (revealedCount > _cnLastRevealedCount) {
+      // En son açılan kartı bul (son revealed olan, role'a göre ses)
+      // Basit: log'un ilk satırına bak ya da remaining değişimine bak
+      const lastReveal = gs.board.find(c => c.revealed && c.role !== 'hidden');
+      // Daha doğru: log'tan oku
+      const lastLog = gs.log?.[0] || '';
+      if (/SUİKASTÇİ/i.test(lastLog)) SFX.cnAssassin();
+      else if (/Kırmızı.*açtı.*Kırmızı/.test(lastLog) || /açtı.*🔴/.test(lastLog)) SFX.cnCardRed();
+      else if (/Mavi.*açtı.*Mavi/.test(lastLog) || /açtı.*🔵/.test(lastLog)) SFX.cnCardBlue();
+      else SFX.cnCardCivil();
+    }
+    _cnLastRevealedCount = revealedCount;
+  }
+  // İpucu verildi mi?
+  if (gs.phase === 'guessing' && _cnLastPhase === 'clueGiving') {
+    SFX.cnClue();
+  }
+  _cnLastPhase = gs.phase;
+
+  const setupDiv = document.getElementById('cn-setup');
+  const playDiv = document.getElementById('cn-play');
+  const gameoverDiv = document.getElementById('cn-gameover');
+
+  if (gs.phase === 'setup') {
+    setupDiv.style.display = '';
+    playDiv.style.display = 'none';
+    gameoverDiv.style.display = 'none';
+    _renderCodenamesSetup();
+    return;
+  }
+
+  if (gs.gameOver) {
+    gameoverDiv.style.display = 'flex';
+    const winner = gs.winner;
+    const titleEl = document.getElementById('cn-gameover-title');
+    if (gs.loseReason === 'assassin') {
+      titleEl.textContent = '💀 Suikastçi açıldı!';
+    } else {
+      titleEl.textContent = '🏆 Oyun Bitti!';
+    }
+    document.getElementById('cn-winner').textContent =
+      winner === 'red' ? '🔴 Kırmızı Takım' : winner === 'blue' ? '🔵 Mavi Takım' : '-';
+    setupDiv.style.display = 'none';
+    playDiv.style.display = 'none';
+    return;
+  }
+
+  // Oyun aktif
+  setupDiv.style.display = 'none';
+  playDiv.style.display = '';
+  gameoverDiv.style.display = 'none';
+  _renderCodenamesPlay(gs, me);
+}
+
+function _renderCodenamesSetup() {
+  const redList = document.getElementById('cn-red-list');
+  const blueList = document.getElementById('cn-blue-list');
+  const unassignedList = document.getElementById('cn-unassigned-list');
+  const hostHint = document.getElementById('cn-host-hint');
+
+  redList.innerHTML = '';
+  blueList.innerHTML = '';
+  unassignedList.innerHTML = '';
+
+  let redSpy = null, blueSpy = null;
+  const redPlayers = [], bluePlayers = [], unassigned = [];
+
+  state.players.forEach(p => {
+    if (p.codenamesTeam === 'red') {
+      redPlayers.push(p);
+      if (p.codenamesRole === 'spymaster') redSpy = p;
+    } else if (p.codenamesTeam === 'blue') {
+      bluePlayers.push(p);
+      if (p.codenamesRole === 'spymaster') blueSpy = p;
+    } else {
+      unassigned.push(p);
+    }
+  });
+
+  const playerLi = (p, role) => `
+    <li class="cn-player-li ${role === 'spymaster' ? 'is-spy' : ''} ${p.id === state.you?.id ? 'is-me' : ''}">
+      ${avatarHTML(p, 'sm')}
+      <span>${escapeHtml(p.name)}</span>
+      ${role === 'spymaster' ? '<span class="cn-spy-tag">🕵️ Casus Şefi</span>' : ''}
+      ${p.id === state.you?.id ? '<span class="cn-you-tag">SEN</span>' : ''}
+    </li>
+  `;
+
+  redPlayers.forEach(p => redList.innerHTML += playerLi(p, p.codenamesRole));
+  bluePlayers.forEach(p => blueList.innerHTML += playerLi(p, p.codenamesRole));
+  unassigned.forEach(p => unassignedList.innerHTML += playerLi(p));
+
+  // Host hint
+  const errors = [];
+  if (redPlayers.length < 2) errors.push('Kırmızı takım min 2 oyuncu');
+  if (bluePlayers.length < 2) errors.push('Mavi takım min 2 oyuncu');
+  if (!redSpy) errors.push('Kırmızı casus şefi seçilmeli');
+  if (!blueSpy) errors.push('Mavi casus şefi seçilmeli');
+
+  const isHost = state.you?.id === state.host;
+  const startBtn = document.getElementById('cn-start-game');
+  if (startBtn) {
+    startBtn.disabled = errors.length > 0;
+    startBtn.style.display = isHost ? '' : 'none';
+  }
+  hostHint.textContent = errors.length === 0
+    ? (isHost ? '✅ Hazır! Oyunu başlat.' : '⏳ Host başlatmasını bekleyin.')
+    : '⚠️ ' + errors.join(' · ');
+  hostHint.className = 'cn-host-hint ' + (errors.length === 0 ? 'ok' : 'warn');
+}
+
+function _renderCodenamesPlay(gs, me) {
+  document.getElementById('cn-red-remaining').textContent = gs.remaining.red;
+  document.getElementById('cn-blue-remaining').textContent = gs.remaining.blue;
+
+  const turnInd = document.getElementById('cn-turn-indicator');
+  turnInd.textContent = gs.currentTurn === 'red' ? '🔴 Kırmızı sıra' : '🔵 Mavi sıra';
+  turnInd.className = 'cn-turn-indicator ' + gs.currentTurn;
+
+  // Casus şefi miyim?
+  const isSpymaster = me && (gs.spymasters?.red === me.id || gs.spymasters?.blue === me.id);
+  const myTeam = me?.codenamesTeam;
+  const isMyTeamTurn = myTeam === gs.currentTurn;
+
+  // Clue bar
+  const clueBar = document.getElementById('cn-clue-bar');
+  if (gs.phase === 'clueGiving') {
+    // Aktif takım casus şefi ise input göster, değilse beklemede
+    const amIClueGiver = (isSpymaster && isMyTeamTurn);
+    if (amIClueGiver) {
+      clueBar.innerHTML = `
+        <div class="cn-clue-input-wrap">
+          <span class="cn-clue-label">İpucu:</span>
+          <input type="text" id="cn-clue-word" placeholder="Kelime" maxlength="30" autocomplete="off" />
+          <input type="number" id="cn-clue-count" placeholder="#" min="0" max="9" value="1" />
+          <button class="btn btn-primary btn-sm" id="cn-clue-submit">Gönder</button>
+        </div>
+      `;
+      const submit = () => {
+        const word = document.getElementById('cn-clue-word').value.trim();
+        const count = parseInt(document.getElementById('cn-clue-count').value) || 0;
+        if (!word) return;
+        socket.emit('codenames:clue', { word, count });
+      };
+      document.getElementById('cn-clue-submit').addEventListener('click', submit);
+      document.getElementById('cn-clue-word').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+      document.getElementById('cn-clue-count').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+    } else {
+      const teamLabel = gs.currentTurn === 'red' ? '🔴 Kırmızı' : '🔵 Mavi';
+      clueBar.innerHTML = `<p class="cn-waiting">⏳ ${teamLabel} casus şefi ipucu hazırlıyor...</p>`;
+    }
+  } else if (gs.phase === 'guessing') {
+    const clue = gs.currentClue;
+    const teamLabel = gs.currentTurn === 'red' ? '🔴' : '🔵';
+    const myTeamGuessing = isMyTeamTurn && !isSpymaster;
+    clueBar.innerHTML = `
+      <div class="cn-clue-display">
+        <span class="cn-clue-label">${teamLabel} İpucu:</span>
+        <span class="cn-clue-word">"${escapeHtml(clue.word)}"</span>
+        <span class="cn-clue-count">${clue.count}</span>
+        <span class="cn-guesses-left">Kalan tahmin: ${gs.guessesLeft}</span>
+        ${myTeamGuessing ? '<button class="btn btn-secondary btn-sm" id="cn-pass-btn">⏭️ Pas</button>' : ''}
+      </div>
+    `;
+    if (myTeamGuessing) {
+      document.getElementById('cn-pass-btn')?.addEventListener('click', () => {
+        socket.emit('codenames:pass');
+      });
+    }
+  }
+
+  // Board
+  const board = document.getElementById('cn-board');
+  board.innerHTML = '';
+  gs.board.forEach((card, idx) => {
+    const cell = document.createElement('div');
+    cell.className = 'cn-card';
+    if (card.revealed) cell.classList.add('revealed');
+    if (card.role && card.role !== 'hidden') cell.classList.add(`role-${card.role}`);
+
+    // Casus şefi tüm rolleri görür (revealed olmasa bile arka plan rengi belli)
+    if (isSpymaster && !card.revealed && card.role !== 'hidden') {
+      cell.classList.add('spy-view');
+    }
+
+    cell.innerHTML = `<span class="cn-card-word">${escapeHtml(card.word)}</span>`;
+
+    // Tıklama: aktif takım üyesi (non-spy) ve guessing fazında
+    if (gs.phase === 'guessing' && !card.revealed && isMyTeamTurn && !isSpymaster) {
+      cell.classList.add('clickable');
+      cell.addEventListener('click', () => {
+        socket.emit('codenames:guess', { cardIndex: idx });
+      });
+    }
+    board.appendChild(cell);
+  });
+
+  // Log
+  const logDiv = document.getElementById('cn-log');
+  if (gs.log && gs.log.length) {
+    logDiv.innerHTML = gs.log.map(l => `<div class="cn-log-entry">${escapeHtml(l)}</div>`).join('');
+  } else {
+    logDiv.innerHTML = '';
+  }
+}
+
+// ============================================================
+// EMOJİ TAHMİN ARAYÜZÜ
+// ============================================================
+document.getElementById('emoji-exit')?.addEventListener('click', exitGame);
+document.getElementById('emoji-back-lobby')?.addEventListener('click', exitGame);
+
+function sendEmojiGuess() {
+  const input = document.getElementById('emoji-guess-input');
+  const text = input.value.trim();
+  if (!text) return;
+  socket.emit('emoji:guess', { text });
+  input.value = '';
+}
+document.getElementById('emoji-guess-btn')?.addEventListener('click', sendEmojiGuess);
+document.getElementById('emoji-guess-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendEmojiGuess();
+});
+
+let _emojiLastCorrectCount = 0;
+let _emojiLastIdx = -1;
+function renderEmoji() {
+  const gs = state.gameState;
+  if (!gs) return;
+
+  // Yeni soru → counter sıfırla
+  if (gs.currentIndex !== _emojiLastIdx) {
+    _emojiLastCorrectCount = 0;
+    _emojiLastIdx = gs.currentIndex;
+  }
+  // Yeni doğru tahmin var mı?
+  const correctCount = gs.correctGuessers?.length || 0;
+  if (correctCount > _emojiLastCorrectCount) {
+    const newOnes = gs.correctGuessers.slice(_emojiLastCorrectCount);
+    const meInNew = newOnes.find(g => g.playerId === state.you?.id);
+    if (meInNew) {
+      // Ben bildim
+      if (gs.firstBonus && newOnes[0].playerId === state.you?.id && _emojiLastCorrectCount === 0) {
+        SFX.emojiFirst();
+      } else {
+        SFX.emojiCorrect();
+      }
+    }
+    _emojiLastCorrectCount = correctCount;
+  }
+  // Reveal sesi
+  if (gs.phase === 'reveal' && !gs._sfxRevealed) {
+    gs._sfxRevealed = true;
+    SFX.emojiReveal();
+  }
+
+  if (gs.currentQuestion) {
+    document.getElementById('emoji-q-num').textContent =
+      `Soru ${gs.currentQuestion.number}/${gs.currentQuestion.total}`;
+    document.getElementById('emoji-cat').textContent = gs.currentQuestion.category || '';
+    document.getElementById('emoji-display').textContent = gs.currentQuestion.emojis || '🎭';
+  }
+  document.getElementById('emoji-timer').textContent = gs.timeLeft || 0;
+
+  // Reveal text
+  const revealText = document.getElementById('emoji-reveal-text');
+  if (gs.phase === 'reveal' && gs.lastResults) {
+    revealText.textContent = `✓ Doğru cevap: "${gs.lastResults.answer}"`;
+    revealText.style.display = '';
+  } else {
+    revealText.style.display = 'none';
+  }
+
+  // Tahmin alanı — sadece question fazında ve henüz bilmediyse
+  const guessArea = document.getElementById('emoji-guess-area');
+  const meAlreadyGuessed = gs.correctGuessers?.some(g => g.playerId === state.you?.id);
+  if (gs.phase === 'question' && !meAlreadyGuessed) {
+    guessArea.classList.remove('disabled');
+    document.getElementById('emoji-guess-input').disabled = false;
+    document.getElementById('emoji-guess-btn').disabled = false;
+  } else {
+    guessArea.classList.add('disabled');
+    document.getElementById('emoji-guess-input').disabled = true;
+    document.getElementById('emoji-guess-btn').disabled = true;
+  }
+
+  // Chat
+  const chat = document.getElementById('emoji-chat');
+  if (gs.guesses && gs.guesses.length) {
+    chat.innerHTML = gs.guesses.map(g => `
+      <div class="emoji-guess-entry ${g.correct ? 'correct' : ''}">
+        ${g.correct ? '' : `<span class="player">${escapeHtml(g.player)}:</span>`}
+        <span class="text">${escapeHtml(g.text)}</span>
+      </div>
+    `).join('');
+    chat.scrollTop = chat.scrollHeight;
+  } else {
+    chat.innerHTML = '<p class="empty">Henüz tahmin yok...</p>';
+  }
+
+  renderScoreboard('emoji-scoreboard', -1);
+
+  const gameOverEl = document.getElementById('emoji-gameover');
+  if (gs.gameOver) {
+    document.getElementById('emoji-winner').textContent = gs.winner || '-';
+    gameOverEl.style.display = 'flex';
+  } else {
+    gameOverEl.style.display = 'none';
+  }
+}
+
+socket.on('emoji:timer', ({ timeLeft }) => {
+  if (state.gameState) state.gameState.timeLeft = timeLeft;
+  const el = document.getElementById('emoji-timer');
+  if (el) el.textContent = timeLeft;
+  if (timeLeft > 0 && timeLeft <= 3) SFX.triviaTick();
+});
+
+// ============================================================
 // SOCKET.IO OLAYLARI
 // ============================================================
 socket.on('room:joined', ({ code, you }) => {
@@ -3331,6 +3892,18 @@ socket.on('room:update', (data) => {
   } else if (data.game === 'uno') {
     showScreen('screen-uno');
     renderUno();
+  } else if (data.game === 'sih') {
+    showScreen('screen-sih');
+    renderSih();
+  } else if (data.game === 'emoji') {
+    showScreen('screen-emoji');
+    renderEmoji();
+  } else if (data.game === 'codenames') {
+    showScreen('screen-codenames');
+    renderCodenames();
+  } else if (data.game === 'syarisi') {
+    showScreen('screen-syarisi');
+    renderSY();
   }
 });
 
@@ -3648,3 +4221,636 @@ window.addEventListener('resize', () => {
     setupCanvas();
   }
 });
+
+// ============================================================
+// ŞEHİR YARIŞI ARAYÜZÜ
+// ============================================================
+const SY_BOARD = [
+  { idx:0, type:'go', name:'Başlangıç' },
+  { idx:1, type:'property', name:'Hakkari', color:'brown', price:60, rent:[2,4,10,30,90,160,250], houseCost:50 },
+  { idx:2, type:'cc', name:'Toplum Sandığı' },
+  { idx:3, type:'property', name:'Şırnak', color:'brown', price:60, rent:[4,8,20,60,180,320,450], houseCost:50 },
+  { idx:4, type:'tax', name:'Gelir Vergisi', amount:200 },
+  { idx:5, type:'airport', name:'Atatürk Havalimanı', price:200 },
+  { idx:6, type:'property', name:'Kars', color:'lblue', price:100, rent:[6,12,30,90,270,400,550], houseCost:50 },
+  { idx:7, type:'chance', name:'Şans' },
+  { idx:8, type:'property', name:'Ardahan', color:'lblue', price:100, rent:[6,12,30,90,270,400,550], houseCost:50 },
+  { idx:9, type:'property', name:'Iğdır', color:'lblue', price:120, rent:[8,16,40,100,300,450,600], houseCost:50 },
+  { idx:10, type:'jail', name:'Hapishane' },
+  { idx:11, type:'property', name:'Sinop', color:'pink', price:140, rent:[10,20,50,150,450,625,750], houseCost:100 },
+  { idx:12, type:'utility', name:'Elektrik İdaresi', price:150 },
+  { idx:13, type:'property', name:'Bartın', color:'pink', price:140, rent:[10,20,50,150,450,625,750], houseCost:100 },
+  { idx:14, type:'property', name:'Düzce', color:'pink', price:160, rent:[12,24,60,180,500,700,900], houseCost:100 },
+  { idx:15, type:'airport', name:'Esenboğa Havalimanı', price:200 },
+  { idx:16, type:'property', name:'Kütahya', color:'orange', price:180, rent:[14,28,70,200,550,750,950], houseCost:100 },
+  { idx:17, type:'cc', name:'Toplum Sandığı' },
+  { idx:18, type:'property', name:'Uşak', color:'orange', price:180, rent:[14,28,70,200,550,750,950], houseCost:100 },
+  { idx:19, type:'property', name:'Manisa', color:'orange', price:200, rent:[16,32,80,220,600,800,1000], houseCost:100 },
+  { idx:20, type:'parking', name:'Ücretsiz Park' },
+  { idx:21, type:'property', name:'Eskişehir', color:'red', price:220, rent:[18,36,90,250,700,875,1050], houseCost:150 },
+  { idx:22, type:'chance', name:'Şans' },
+  { idx:23, type:'property', name:'Konya', color:'red', price:220, rent:[18,36,90,250,700,875,1050], houseCost:150 },
+  { idx:24, type:'property', name:'Kayseri', color:'red', price:240, rent:[20,40,100,300,750,925,1100], houseCost:150 },
+  { idx:25, type:'airport', name:'A. Menderes Hav.', price:200 },
+  { idx:26, type:'property', name:'Bursa', color:'yellow', price:260, rent:[22,44,110,330,800,975,1150], houseCost:150 },
+  { idx:27, type:'property', name:'Antalya', color:'yellow', price:260, rent:[22,44,110,330,800,975,1150], houseCost:150 },
+  { idx:28, type:'utility', name:'Su İdaresi', price:150 },
+  { idx:29, type:'property', name:'Adana', color:'yellow', price:280, rent:[24,48,120,360,850,1025,1200], houseCost:150 },
+  { idx:30, type:'goToJail', name:'Hapse Git!' },
+  { idx:31, type:'property', name:'İzmir', color:'green', price:300, rent:[26,52,130,390,900,1100,1275], houseCost:200 },
+  { idx:32, type:'property', name:'Ankara', color:'green', price:300, rent:[26,52,130,390,900,1100,1275], houseCost:200 },
+  { idx:33, type:'cc', name:'Toplum Sandığı' },
+  { idx:34, type:'property', name:'Trabzon', color:'green', price:320, rent:[28,56,150,450,1000,1200,1400], houseCost:200 },
+  { idx:35, type:'airport', name:'Sabiha Gökçen Hav.', price:200 },
+  { idx:36, type:'chance', name:'Şans' },
+  { idx:37, type:'property', name:'Gümüşhane', color:'dblue', price:350, rent:[35,70,175,500,1100,1300,1500], houseCost:200 },
+  { idx:38, type:'tax', name:'Lüks Vergisi', amount:100 },
+  { idx:39, type:'property', name:'İstanbul', color:'dblue', price:400, rent:[50,100,200,600,1400,1700,2000], houseCost:200 }
+];
+
+// idx → grid row/col
+function syGridPos(idx) {
+  if (idx === 0) return { r: 11, c: 11 };
+  if (idx >= 1 && idx <= 9) return { r: 11, c: 11 - idx };
+  if (idx === 10) return { r: 11, c: 1 };
+  if (idx >= 11 && idx <= 19) return { r: 11 - (idx - 10), c: 1 };
+  if (idx === 20) return { r: 1, c: 1 };
+  if (idx >= 21 && idx <= 29) return { r: 1, c: (idx - 20) + 1 };
+  if (idx === 30) return { r: 1, c: 11 };
+  if (idx >= 31 && idx <= 39) return { r: (idx - 30) + 1, c: 11 };
+  return { r: 1, c: 1 };
+}
+// Edge'i hangi tarafta: bottom/top/left/right/corner
+function syEdge(idx) {
+  if ([0, 10, 20, 30].includes(idx)) return 'corner';
+  if (idx >= 1 && idx <= 9) return 'bottom';
+  if (idx >= 11 && idx <= 19) return 'left';
+  if (idx >= 21 && idx <= 29) return 'top';
+  if (idx >= 31 && idx <= 39) return 'right';
+  return 'corner';
+}
+
+const SY_COLOR_LABELS = {
+  brown: 'KAHVE', lblue: 'AÇIK MAVİ', pink: 'PEMBE', orange: 'TURUNCU',
+  red: 'KIRMIZI', yellow: 'SARI', green: 'YEŞİL', dblue: 'KOYU MAVİ'
+};
+
+// Exit handlers
+document.getElementById('sy-exit')?.addEventListener('click', exitGame);
+document.getElementById('sy-back-lobby')?.addEventListener('click', exitGame);
+
+// Tek seferlik board iskeleti çizimi
+let _syBoardBuilt = false;
+function _syBuildBoard() {
+  const board = document.getElementById('sy-board');
+  board.innerHTML = '';
+  // Merkez
+  const center = document.createElement('div');
+  center.className = 'sy-center';
+  center.innerHTML = `
+    <div class="sy-center-title">ŞEHİR YARIŞI</div>
+    <div class="sy-center-subtitle">Türkiye'nin emlak macerası</div>
+    <div class="sy-center-deck">
+      <div class="sy-deck sy-deck-chance">🎴<br/>ŞANS</div>
+      <div class="sy-deck sy-deck-cc">📦<br/>TOPLUM<br/>SANDIĞI</div>
+    </div>
+  `;
+  board.appendChild(center);
+
+  SY_BOARD.forEach(sq => {
+    const cell = document.createElement('div');
+    const pos = syGridPos(sq.idx);
+    const edge = syEdge(sq.idx);
+    cell.style.gridRow = pos.r;
+    cell.style.gridColumn = pos.c;
+    cell.dataset.idx = sq.idx;
+    cell.dataset.name = sq.name;
+    cell.className = `sy-sq sy-sq-${edge} sy-sq-${sq.type}`;
+    cell.id = `sy-sq-${sq.idx}`;
+
+    if (edge === 'corner') {
+      let icon = '🎮', label = sq.name;
+      if (sq.idx === 0) { icon = '⭐'; label = 'BAŞLANGIÇ'; }
+      else if (sq.idx === 10) { icon = '🔒'; label = 'HAPİS'; }
+      else if (sq.idx === 20) { icon = '🅿️'; label = 'ÜCRETSİZ PARK'; }
+      else if (sq.idx === 30) { icon = '🚔'; label = 'HAPSE GİT'; }
+      cell.className += ' sy-sq-corner';
+      cell.innerHTML = `<div class="sy-corner-icon">${icon}</div><div class="sy-corner-label">${label}</div>`;
+    } else {
+      let inner = '';
+      if (sq.type === 'property') {
+        cell.innerHTML += `<div class="sy-color-band sy-color-${sq.color}"></div>`;
+        inner = `<div class="sy-sq-name">${sq.name}</div><div class="sy-sq-price">${sq.price}₺</div>`;
+      } else if (sq.type === 'airport') {
+        inner = `<div class="sy-sq-name">${sq.name}</div><div class="sy-sq-price">${sq.price}₺</div>`;
+      } else if (sq.type === 'utility') {
+        inner = `<div class="sy-sq-name">${sq.name}</div><div class="sy-sq-price">${sq.price}₺</div>`;
+      } else if (sq.type === 'tax') {
+        inner = `<div class="sy-sq-name">${sq.name}</div><div class="sy-sq-price">-${sq.amount}₺</div>`;
+      } else if (sq.type === 'chance') {
+        inner = `<div class="sy-sq-name">🎴<br/>ŞANS</div>`;
+      } else if (sq.type === 'cc') {
+        inner = `<div class="sy-sq-name">📦<br/>TOPLUM<br/>SANDIĞI</div>`;
+      }
+      cell.innerHTML += `<div class="sy-sq-content">${inner}</div>`;
+      // Token/house container
+      cell.innerHTML += `<div class="sy-houses" data-houses="${sq.idx}"></div>`;
+      cell.innerHTML += `<div class="sy-tokens" data-tokens="${sq.idx}"></div>`;
+    }
+    board.appendChild(cell);
+  });
+  _syBoardBuilt = true;
+}
+
+let _syLastDice = [0, 0];
+function renderSY() {
+  const gs = state.gameState;
+  if (!gs) return;
+  if (!_syBoardBuilt) _syBuildBoard();
+
+  // Game over modal
+  const goEl = document.getElementById('sy-gameover');
+  if (gs.gameOver) {
+    goEl.style.display = 'flex';
+    const winner = gs.players.find(p => p.id === gs.winner);
+    document.getElementById('sy-winner').textContent = winner ? winner.name : '-';
+  } else {
+    goEl.style.display = 'none';
+  }
+
+  // Players panel
+  _syRenderPlayers(gs);
+  // Board dynamic state
+  _syRenderBoardState(gs);
+  // Dice + turn info
+  _syRenderTurnInfo(gs);
+  // Log
+  const logEl = document.getElementById('sy-log');
+  logEl.innerHTML = (gs.log || []).map(l => `<div class="sy-log-entry">${escapeHtml(l)}</div>`).join('');
+
+  // Modals
+  _syHandleModals(gs);
+}
+
+function _syRenderPlayers(gs) {
+  const panel = document.getElementById('sy-players-panel');
+  panel.innerHTML = '';
+  gs.players.forEach(p => {
+    const isTurn = p.id === gs.turnPlayerId && !gs.gameOver;
+    const card = document.createElement('div');
+    card.className = 'sy-player-card' + (isTurn ? ' is-turn' : '') + (p.bankrupt ? ' is-bankrupt' : '');
+    card.style.setProperty('--token-color', p.color);
+    let propCount = gs.squares.filter(s => s.ownerId === p.id).length;
+    let jailHtml = p.jailTurns > 0 ? `<span class="sy-player-jail">🔒 ${p.jailTurns}/3</span>` : '';
+    let cardsHtml = p.getOutCards > 0 ? ` 🎫×${p.getOutCards}` : '';
+    card.innerHTML = `
+      <div class="sy-player-name"><span class="sy-player-token"></span>${escapeHtml(p.name)}${jailHtml}${p.id === state.you?.id ? ' (SEN)' : ''}</div>
+      <div class="sy-player-money">${p.money}₺</div>
+      <div class="sy-player-status">🏠 ${propCount} mülk${cardsHtml}${p.bankrupt ? ' · 💀 İFLAS' : ''}</div>
+    `;
+    panel.appendChild(card);
+  });
+}
+
+function _syRenderBoardState(gs) {
+  // Clear all token/house containers
+  document.querySelectorAll('[data-tokens]').forEach(el => el.innerHTML = '');
+  document.querySelectorAll('[data-houses]').forEach(el => el.innerHTML = '');
+
+  // Mortgage + ownership state
+  gs.squares.forEach((sq, idx) => {
+    const cell = document.getElementById(`sy-sq-${idx}`);
+    if (!cell) return;
+    cell.classList.toggle('is-mortgaged', !!sq.mortgaged);
+    cell.classList.toggle('is-owned', !!sq.ownerId);
+    if (sq.ownerId) {
+      const owner = gs.players.find(p => p.id === sq.ownerId);
+      cell.style.setProperty('--owner-color', owner?.color || '#999');
+    } else {
+      cell.style.removeProperty('--owner-color');
+    }
+    // Houses/hotel
+    const hContainer = cell.querySelector('[data-houses]');
+    if (hContainer) {
+      if (sq.hotel) {
+        hContainer.innerHTML = '<div class="sy-hotel-dot"></div>';
+      } else if (sq.houses > 0) {
+        hContainer.innerHTML = Array.from({ length: sq.houses }, () => '<div class="sy-house-dot"></div>').join('');
+      }
+    }
+  });
+
+  // Tokens (player positions)
+  gs.players.forEach(p => {
+    if (p.bankrupt) return;
+    const cell = document.getElementById(`sy-sq-${p.position}`);
+    if (!cell) return;
+    const tContainer = cell.querySelector('[data-tokens]') || cell;
+    const tok = document.createElement('div');
+    tok.className = 'sy-token';
+    tok.style.setProperty('--token-color', p.color);
+    tok.title = p.name;
+    tContainer.appendChild(tok);
+  });
+}
+
+function _syRenderTurnInfo(gs) {
+  const die1 = document.getElementById('sy-die-1');
+  const die2 = document.getElementById('sy-die-2');
+  const dice = gs.dice || [0, 0];
+  // Animation on change
+  if (dice[0] !== _syLastDice[0] || dice[1] !== _syLastDice[1]) {
+    if (dice[0] > 0 || dice[1] > 0) {
+      die1.classList.add('rolling'); die2.classList.add('rolling');
+      setTimeout(() => { die1.classList.remove('rolling'); die2.classList.remove('rolling'); }, 600);
+    }
+    _syLastDice = [...dice];
+  }
+  die1.textContent = dice[0] > 0 ? dice[0] : '?';
+  die2.textContent = dice[1] > 0 ? dice[1] : '?';
+
+  const turnPlayer = gs.players.find(p => p.id === gs.turnPlayerId);
+  const myTurn = gs.turnPlayerId === state.you?.id;
+  const me = gs.players.find(p => p.id === state.you?.id);
+
+  const turnInfo = document.getElementById('sy-turn-info');
+  if (gs.gameOver) {
+    turnInfo.textContent = '🏆 Oyun bitti';
+  } else {
+    turnInfo.innerHTML = myTurn
+      ? `<span style="color:#f1c40f">🎯 SIRA SENDE</span>`
+      : `Sıra: <span style="color:${turnPlayer?.color}">${turnPlayer?.name || '-'}</span>`;
+  }
+
+  // Buttons
+  const btns = document.getElementById('sy-action-buttons');
+  btns.innerHTML = '';
+  if (gs.gameOver) return;
+
+  if (myTurn && me && !me.bankrupt) {
+    const isDoubles = dice[0] === dice[1] && dice[0] > 0;
+    if (gs.phase === 'rolling') {
+      if (me.jailTurns > 0) {
+        // Hapisten çıkış seçenekleri
+        const payBtn = document.createElement('button');
+        payBtn.className = 'btn btn-primary';
+        payBtn.textContent = `💸 ${state.settings?.syarisi?.jailFine ?? 50}₺ Ceza Öde`;
+        payBtn.addEventListener('click', () => socket.emit('sy:payJail'));
+        btns.appendChild(payBtn);
+        if (me.getOutCards > 0) {
+          const cardBtn = document.createElement('button');
+          cardBtn.className = 'btn btn-secondary';
+          cardBtn.textContent = `🎫 Çıkış Kartı Kullan (${me.getOutCards})`;
+          cardBtn.addEventListener('click', () => socket.emit('sy:useCard'));
+          btns.appendChild(cardBtn);
+        }
+        const rollBtn = document.createElement('button');
+        rollBtn.className = 'btn btn-ghost';
+        rollBtn.textContent = '🎲 Zar At (çift bekle)';
+        rollBtn.addEventListener('click', () => socket.emit('sy:roll'));
+        btns.appendChild(rollBtn);
+      } else if (dice[0] === 0 && dice[1] === 0) {
+        const rollBtn = document.createElement('button');
+        rollBtn.className = 'btn btn-primary';
+        rollBtn.textContent = '🎲 Zar At';
+        rollBtn.addEventListener('click', () => socket.emit('sy:roll'));
+        btns.appendChild(rollBtn);
+      } else if (isDoubles) {
+        const rollBtn = document.createElement('button');
+        rollBtn.className = 'btn btn-primary';
+        rollBtn.textContent = '🎲 Tekrar Zar At (çift)';
+        rollBtn.addEventListener('click', () => socket.emit('sy:roll'));
+        btns.appendChild(rollBtn);
+      } else {
+        const endBtn = document.createElement('button');
+        endBtn.className = 'btn btn-primary';
+        endBtn.textContent = '⏭️ Turu Bitir';
+        endBtn.addEventListener('click', () => socket.emit('sy:endTurn'));
+        btns.appendChild(endBtn);
+      }
+    }
+  }
+
+  // Her zaman görünür: yönet + takas (kendi sıranızda olmasa da kullanılabilir aslında)
+  if (me && !me.bankrupt) {
+    const manageBtn = document.createElement('button');
+    manageBtn.className = 'btn btn-ghost';
+    manageBtn.textContent = '🏘️ Mülklerimi Yönet';
+    manageBtn.addEventListener('click', () => _syOpenManageModal(gs));
+    btns.appendChild(manageBtn);
+
+    const tradeBtn = document.createElement('button');
+    tradeBtn.className = 'btn btn-ghost';
+    tradeBtn.textContent = '🤝 Takas Teklif Et';
+    tradeBtn.addEventListener('click', () => _syOpenTradeModal(gs));
+    btns.appendChild(tradeBtn);
+  }
+}
+
+function _syHandleModals(gs) {
+  const me = gs.players.find(p => p.id === state.you?.id);
+  const myTurn = gs.turnPlayerId === state.you?.id;
+
+  // Buy modal
+  const buyModal = document.getElementById('sy-buy-modal');
+  if (gs.phase === 'awaitBuy' && gs.pendingBuy && myTurn && !gs.gameOver) {
+    const sq = SY_BOARD[gs.pendingBuy.propertyIdx];
+    document.getElementById('sy-buy-title').textContent = `${sq.name} — Satın Almak İster Misin?`;
+    document.getElementById('sy-buy-card').innerHTML = _syPropertyCardHTML(sq);
+    buyModal.style.display = 'flex';
+  } else {
+    buyModal.style.display = 'none';
+  }
+
+  // Auction modal
+  const auctionModal = document.getElementById('sy-auction-modal');
+  if (gs.phase === 'auction' && gs.auction && me && !me.bankrupt) {
+    const sq = SY_BOARD[gs.auction.propertyIdx];
+    document.getElementById('sy-auction-card').innerHTML = _syPropertyCardHTML(sq);
+    document.getElementById('sy-auction-bid').textContent = (gs.auction.currentBid || 0) + '₺';
+    const bidderName = gs.players.find(p => p.id === gs.auction.currentBidderId)?.name || '-';
+    document.getElementById('sy-auction-bidder').textContent = bidderName;
+    const passed = (gs.auction.passed || []).includes(state.you?.id);
+    const statusEl = document.getElementById('sy-auction-status');
+    if (passed) {
+      statusEl.textContent = '⏭️ Pas geçtin, izliyorsun.';
+      document.getElementById('sy-auction-bid-btn').disabled = true;
+      document.getElementById('sy-auction-pass-btn').disabled = true;
+    } else {
+      statusEl.textContent = '';
+      document.getElementById('sy-auction-bid-btn').disabled = false;
+      document.getElementById('sy-auction-pass-btn').disabled = false;
+    }
+    auctionModal.style.display = 'flex';
+  } else {
+    auctionModal.style.display = 'none';
+  }
+
+  // Trade response modal (bana teklif geldi mi?)
+  const tradeResp = document.getElementById('sy-trade-response-modal');
+  if (gs.pendingTrade && gs.pendingTrade.toId === state.you?.id) {
+    const fromP = gs.players.find(p => p.id === gs.pendingTrade.fromId);
+    document.getElementById('sy-trade-from').textContent = `${fromP?.name} sana teklif gönderdi`;
+    document.getElementById('sy-trade-summary').innerHTML = _syTradeSummaryHTML(gs.pendingTrade);
+    tradeResp.style.display = 'flex';
+  } else {
+    tradeResp.style.display = 'none';
+  }
+}
+
+function _syPropertyCardHTML(sq) {
+  if (sq.type === 'property') {
+    return `
+      <div class="sy-card-band sy-color-${sq.color}">${SY_COLOR_LABELS[sq.color]}</div>
+      <div class="sy-card-body">
+        <h3 style="margin:0;text-align:center;">${sq.name}</h3>
+        <div class="sy-card-price">${sq.price}₺</div>
+        <table class="sy-rent-table">
+          <tr><td>Kira</td><td>${sq.rent[0]}₺</td></tr>
+          <tr><td>Renk grubu tam</td><td>${sq.rent[1]}₺</td></tr>
+          <tr><td>1 ev</td><td>${sq.rent[2]}₺</td></tr>
+          <tr><td>2 ev</td><td>${sq.rent[3]}₺</td></tr>
+          <tr><td>3 ev</td><td>${sq.rent[4]}₺</td></tr>
+          <tr><td>4 ev</td><td>${sq.rent[5]}₺</td></tr>
+          <tr><td>OTEL</td><td>${sq.rent[6]}₺</td></tr>
+          <tr><td>Ev/otel maliyeti</td><td>${sq.houseCost}₺</td></tr>
+          <tr><td>İpotek değeri</td><td>${Math.floor(sq.price/2)}₺</td></tr>
+        </table>
+      </div>`;
+  } else if (sq.type === 'airport') {
+    return `
+      <div class="sy-card-band" style="background:#222">✈️ HAVAALANI</div>
+      <div class="sy-card-body">
+        <h3 style="margin:0;text-align:center;">${sq.name}</h3>
+        <div class="sy-card-price">${sq.price}₺</div>
+        <table class="sy-rent-table">
+          <tr><td>1 havaalanı</td><td>25₺</td></tr>
+          <tr><td>2 havaalanı</td><td>50₺</td></tr>
+          <tr><td>3 havaalanı</td><td>100₺</td></tr>
+          <tr><td>4 havaalanı</td><td>200₺</td></tr>
+          <tr><td>İpotek değeri</td><td>${Math.floor(sq.price/2)}₺</td></tr>
+        </table>
+      </div>`;
+  } else if (sq.type === 'utility') {
+    return `
+      <div class="sy-card-band" style="background:#5d4037">🏭 HİZMET</div>
+      <div class="sy-card-body">
+        <h3 style="margin:0;text-align:center;">${sq.name}</h3>
+        <div class="sy-card-price">${sq.price}₺</div>
+        <p style="font-size:0.85rem;text-align:center;">1 sahipse zar × 4<br/>2 sahipse zar × 10</p>
+      </div>`;
+  }
+  return `<div class="sy-card-body"><h3>${sq.name}</h3></div>`;
+}
+
+document.getElementById('sy-buy-confirm')?.addEventListener('click', () => {
+  socket.emit('sy:buy');
+});
+document.getElementById('sy-buy-decline')?.addEventListener('click', () => {
+  socket.emit('sy:decline');
+});
+
+document.getElementById('sy-auction-bid-btn')?.addEventListener('click', () => {
+  const v = parseInt(document.getElementById('sy-auction-input').value) || 0;
+  if (v <= 0) return;
+  socket.emit('sy:bid', { amount: v });
+  document.getElementById('sy-auction-input').value = '';
+});
+document.getElementById('sy-auction-pass-btn')?.addEventListener('click', () => {
+  socket.emit('sy:passBid');
+});
+
+// --- Manage modal ---
+function _syOpenManageModal(gs) {
+  const me = gs.players.find(p => p.id === state.you?.id);
+  if (!me) return;
+  const list = document.getElementById('sy-manage-list');
+  list.innerHTML = '';
+  const myProps = gs.squares.map((s, i) => ({ ...s, sq: SY_BOARD[i] })).filter(s => s.ownerId === me.id);
+  if (myProps.length === 0) {
+    list.innerHTML = '<p style="text-align:center;color:#888">Henüz mülkün yok.</p>';
+  }
+  myProps.forEach(s => {
+    const sq = s.sq;
+    const item = document.createElement('div');
+    item.className = 'sy-manage-item';
+    let colorBg = sq.color ? `var(--c, transparent)` : '#999';
+    let bandHtml = sq.color ? `<div class="sy-manage-color sy-color-${sq.color}"></div>` : `<div class="sy-manage-color" style="background:#666"></div>`;
+    let statusHtml = '';
+    if (s.mortgaged) statusHtml = '<span style="color:#c62828">📜 İpotekli</span>';
+    else if (s.hotel) statusHtml = `🏨 Otel`;
+    else if (s.houses > 0) statusHtml = `🏘️ ${s.houses} ev`;
+    item.innerHTML = `
+      ${bandHtml}
+      <div class="sy-manage-info">
+        <b>${sq.name}</b>
+        <span>${statusHtml}</span>
+      </div>
+      <div class="sy-manage-buttons" data-idx="${s.idx}"></div>
+    `;
+    const btnHolder = item.querySelector('.sy-manage-buttons');
+    if (sq.type === 'property') {
+      if (!s.mortgaged && !s.hotel && s.houses < 4) {
+        const buildBtn = document.createElement('button');
+        buildBtn.className = 'btn btn-primary';
+        buildBtn.textContent = '🏗️ Ev İnşa';
+        buildBtn.addEventListener('click', () => socket.emit('sy:build', { squareIdx: s.idx }));
+        btnHolder.appendChild(buildBtn);
+      }
+      if (!s.mortgaged && s.houses === 3 && !s.hotel) {
+        // 4. evden otele
+      }
+      if (!s.mortgaged && (s.houses === 4)) {
+        const hotelBtn = document.createElement('button');
+        hotelBtn.className = 'btn btn-primary';
+        hotelBtn.textContent = '🏨 Otel İnşa';
+        hotelBtn.addEventListener('click', () => socket.emit('sy:build', { squareIdx: s.idx }));
+        btnHolder.appendChild(hotelBtn);
+      }
+      if (s.houses > 0 || s.hotel) {
+        const sellBtn = document.createElement('button');
+        sellBtn.className = 'btn btn-secondary';
+        sellBtn.textContent = '🔨 Sat';
+        sellBtn.addEventListener('click', () => socket.emit('sy:sellHouse', { squareIdx: s.idx }));
+        btnHolder.appendChild(sellBtn);
+      }
+    }
+    if (!s.mortgaged && s.houses === 0 && !s.hotel) {
+      const mortBtn = document.createElement('button');
+      mortBtn.className = 'btn btn-ghost';
+      mortBtn.textContent = '📜 İpotek';
+      mortBtn.addEventListener('click', () => socket.emit('sy:mortgage', { squareIdx: s.idx }));
+      btnHolder.appendChild(mortBtn);
+    }
+    if (s.mortgaged) {
+      const unmBtn = document.createElement('button');
+      unmBtn.className = 'btn btn-ghost';
+      unmBtn.textContent = '🔓 Geri Al';
+      unmBtn.addEventListener('click', () => socket.emit('sy:unmortgage', { squareIdx: s.idx }));
+      btnHolder.appendChild(unmBtn);
+    }
+    list.appendChild(item);
+  });
+  document.getElementById('sy-manage-modal').style.display = 'flex';
+}
+document.getElementById('sy-manage-close')?.addEventListener('click', () => {
+  document.getElementById('sy-manage-modal').style.display = 'none';
+});
+
+// --- Trade modal ---
+let _syTradeSelections = { give: new Set(), want: new Set() };
+function _syOpenTradeModal(gs) {
+  const me = gs.players.find(p => p.id === state.you?.id);
+  if (!me) return;
+  _syTradeSelections = { give: new Set(), want: new Set() };
+
+  // Hedef seçimi
+  const target = document.getElementById('sy-trade-target');
+  target.innerHTML = '';
+  gs.players.forEach(p => {
+    if (p.id !== me.id && !p.bankrupt) {
+      target.innerHTML += `<option value="${p.id}">${escapeHtml(p.name)}</option>`;
+    }
+  });
+
+  // Senin mülklerin
+  const giveProps = document.getElementById('sy-trade-give-props');
+  giveProps.innerHTML = '';
+  gs.squares.forEach((s, idx) => {
+    if (s.ownerId !== me.id) return;
+    if (s.houses > 0 || s.hotel) return; // Evli mülkleri takas edemezsin
+    const sq = SY_BOARD[idx];
+    const item = document.createElement('div');
+    item.className = 'sy-trade-prop-item';
+    item.innerHTML = `<input type="checkbox" data-idx="${idx}"/> ${sq.name} (${sq.price}₺)`;
+    item.querySelector('input').addEventListener('change', e => {
+      if (e.target.checked) _syTradeSelections.give.add(idx);
+      else _syTradeSelections.give.delete(idx);
+      item.classList.toggle('selected', e.target.checked);
+    });
+    giveProps.appendChild(item);
+  });
+
+  // Hedef mülklerini güncelle (seçim değişince)
+  function refreshWantProps() {
+    const wantProps = document.getElementById('sy-trade-want-props');
+    wantProps.innerHTML = '';
+    const targetId = target.value;
+    gs.squares.forEach((s, idx) => {
+      if (s.ownerId !== targetId) return;
+      if (s.houses > 0 || s.hotel) return;
+      const sq = SY_BOARD[idx];
+      const item = document.createElement('div');
+      item.className = 'sy-trade-prop-item';
+      const checked = _syTradeSelections.want.has(idx);
+      item.innerHTML = `<input type="checkbox" data-idx="${idx}" ${checked ? 'checked' : ''}/> ${sq.name} (${sq.price}₺)`;
+      if (checked) item.classList.add('selected');
+      item.querySelector('input').addEventListener('change', e => {
+        if (e.target.checked) _syTradeSelections.want.add(idx);
+        else _syTradeSelections.want.delete(idx);
+        item.classList.toggle('selected', e.target.checked);
+      });
+      wantProps.appendChild(item);
+    });
+  }
+  target.addEventListener('change', () => {
+    _syTradeSelections.want.clear();
+    refreshWantProps();
+  });
+  refreshWantProps();
+
+  // Reset money/cards
+  document.getElementById('sy-trade-give-money').value = 0;
+  document.getElementById('sy-trade-give-cards').value = 0;
+  document.getElementById('sy-trade-want-money').value = 0;
+  document.getElementById('sy-trade-want-cards').value = 0;
+
+  document.getElementById('sy-trade-modal').style.display = 'flex';
+}
+document.getElementById('sy-trade-cancel')?.addEventListener('click', () => {
+  document.getElementById('sy-trade-modal').style.display = 'none';
+});
+document.getElementById('sy-trade-send')?.addEventListener('click', () => {
+  const toId = document.getElementById('sy-trade-target').value;
+  if (!toId) return;
+  const give = {
+    money: parseInt(document.getElementById('sy-trade-give-money').value) || 0,
+    getOutCards: parseInt(document.getElementById('sy-trade-give-cards').value) || 0,
+    properties: [..._syTradeSelections.give]
+  };
+  const want = {
+    money: parseInt(document.getElementById('sy-trade-want-money').value) || 0,
+    getOutCards: parseInt(document.getElementById('sy-trade-want-cards').value) || 0,
+    properties: [..._syTradeSelections.want]
+  };
+  socket.emit('sy:proposeTrade', { toId, give, want });
+  document.getElementById('sy-trade-modal').style.display = 'none';
+});
+
+function _syTradeSummaryHTML(t) {
+  const gs = state.gameState;
+  const fromP = gs.players.find(p => p.id === t.fromId);
+  const toP = gs.players.find(p => p.id === t.toId);
+  const propNames = (arr) => arr.map(i => SY_BOARD[i].name).join(', ') || '—';
+  return `
+    <div><b>${escapeHtml(fromP?.name)}</b> sana teklif ediyor:</div>
+    <div style="margin-top:8px"><b>Sana verecek:</b><br/>
+      💵 ${t.give.money || 0}₺ · 🎫 ${t.give.getOutCards || 0} kart<br/>
+      🏠 ${propNames(t.give.properties || [])}
+    </div>
+    <div style="margin-top:8px"><b>Karşılığında istiyor:</b><br/>
+      💵 ${t.want.money || 0}₺ · 🎫 ${t.want.getOutCards || 0} kart<br/>
+      🏠 ${propNames(t.want.properties || [])}
+    </div>
+  `;
+}
+document.getElementById('sy-trade-accept')?.addEventListener('click', () => {
+  socket.emit('sy:respondTrade', { accept: true });
+});
+document.getElementById('sy-trade-reject')?.addEventListener('click', () => {
+  socket.emit('sy:respondTrade', { accept: false });
+});
+
+// Kart modal — pendingCard varsa otomatik göster, ok'lediği zaman serv tarafa relaylanmıyor (server otomatik uyguladı zaten); sadece ok kapatır.
+// Aslında kart efektleri broadcast'te direk uygulanmış olur. UI sadece bilgi vermek için kullanılır.
+// Bu modal artık opsiyonel — log'da görünür. Şimdilik kullanmıyoruz.

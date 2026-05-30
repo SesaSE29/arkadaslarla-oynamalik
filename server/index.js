@@ -55,6 +55,19 @@ for (const cat of ['hayvan', 'bitki', 'esya', 'ulke', 'yemek']) {
   }
 }
 
+// Şehir-İsim-Hayvan için ek kategoriler (sehir, isim, renk, marka)
+for (const cat of ['sehir', 'isim', 'renk', 'marka']) {
+  try {
+    const list = require(`./data/sih/${cat}`)
+      .map(w => w.toLocaleLowerCase('tr-TR'));
+    CATEGORIES[cat] = new Set(list);
+    console.log(`SİH kategori "${cat}": ${CATEGORIES[cat].size} kelime`);
+  } catch (e) {
+    console.warn(`SİH kategori "${cat}" yüklenemedi:`, e.message);
+    CATEGORIES[cat] = new Set();
+  }
+}
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -112,6 +125,44 @@ function broadcastRoom(roomCode) {
   // Vampir oyununda role'leri gizli tut (oyun bitene kadar)
   const hideRoles = room.game === 'vampir' && !room.gameState?.gameOver;
   
+  // Codenames: spymaster harici board.role'leri gizle
+  const isCodenames = room.game === 'codenames' && cleanState;
+  if (isCodenames && cleanState.board) {
+    const boardBackup = cleanState.board;
+    const spyMap = cleanState.spymasters || {};
+    const spyIds = new Set([spyMap.red, spyMap.blue].filter(Boolean));
+    const isGameOver = cleanState.gameOver;
+
+    room.players.forEach(p => {
+      const personalState = { ...cleanState };
+      const isSpy = spyIds.has(p.id);
+      if (isSpy || isGameOver) {
+        personalState.board = boardBackup; // tüm rolleri gör
+      } else {
+        // Ajan: sadece revealed olanların rolünü gör
+        personalState.board = boardBackup.map(c => c.revealed
+          ? c
+          : { word: c.word, role: 'hidden', revealed: false }
+        );
+      }
+      io.to(p.id).emit('room:update', {
+        code: room.code,
+        host: room.host,
+        players: room.players.map(op => ({
+          id: op.id, name: op.name, score: op.score, alive: op.alive,
+          eliminated: op.eliminated, ready: op.ready,
+          codenamesTeam: op.codenamesTeam || null,
+          codenamesRole: op.codenamesRole || null
+        })),
+        game: room.game,
+        gameState: personalState,
+        settings: room.settings,
+        lobbyChat: room.lobbyChat || []
+      });
+    });
+    return;
+  }
+
   // Uno oyununda diğer oyuncuların ellerini gizli tut
   const hideUnoHands = room.game === 'uno';
   if (hideUnoHands && cleanState && cleanState.hands) {
@@ -141,7 +192,9 @@ function broadcastRoom(roomCode) {
           score: op.score,
           alive: op.alive,
           eliminated: op.eliminated,
-          ready: op.ready
+          ready: op.ready,
+          codenamesTeam: op.codenamesTeam || null,
+          codenamesRole: op.codenamesRole || null
         })),
         game: room.game,
         gameState: personalState,
@@ -158,7 +211,9 @@ function broadcastRoom(roomCode) {
     score: p.score,
     alive: p.alive,
     eliminated: p.eliminated,
-    ready: p.ready
+    ready: p.ready,
+    codenamesTeam: p.codenamesTeam || null,
+    codenamesRole: p.codenamesRole || null
     // role aşağıda kişiye göre eklenir
   }));
 
@@ -225,7 +280,11 @@ function stopGame(room) {
     'vampir': Vampir,
     'yilan': Yilan,
     'amiral': AmiralBatti,
-    'uno': UnoOyun
+    'uno': UnoOyun,
+    'sih': SehirIsimHayvan,
+    'emoji': EmojiTahmin,
+    'codenames': Codenames,
+    'syarisi': SehirYarisi
   };
   const stopper = stoppers[room.game];
   if (stopper && typeof stopper.stop === 'function') {
@@ -2157,6 +2216,648 @@ const AmiralBatti = {
 // ============================================================
 // UNO BENZERİ
 // ============================================================
+// ============================================================
+// CODENAMES TR
+// ============================================================
+let CODENAMES_WORDS = [];
+try {
+  CODENAMES_WORDS = [...new Set(require('./data/codenames-words'))];
+  console.log(`Codenames kelime havuzu: ${CODENAMES_WORDS.length} kelime`);
+} catch (e) {
+  console.warn('Codenames kelimeleri yüklenemedi:', e.message);
+}
+
+const Codenames = {
+  start(room) {
+    // Setup fazı — takım/rol seçimi için boş state
+    room.players.forEach(p => {
+      p.score = 0;
+      p.eliminated = false;
+    });
+    room.gameState = {
+      type: 'codenames',
+      phase: 'setup',
+      board: null,
+      teams: { red: [], blue: [] },
+      spymasters: { red: null, blue: null },
+      currentTurn: null,
+      firstTeam: null,
+      currentClue: null,
+      guessesLeft: 0,
+      remaining: { red: 0, blue: 0 },
+      log: [],
+      winner: null,
+      loseReason: null,
+      gameOver: false
+    };
+    broadcastRoom(room.code);
+    return true;
+  },
+
+  beginRound(room, hostId) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'setup') return;
+    if (room.host !== hostId) return;
+
+    const s = room.settings?.codenames || {};
+    const firstTeam = (s.firstTeam === 'red' || s.firstTeam === 'blue')
+      ? s.firstTeam : (Math.random() < 0.5 ? 'red' : 'blue');
+
+    const red = room.players.filter(p => p.codenamesTeam === 'red');
+    const blue = room.players.filter(p => p.codenamesTeam === 'blue');
+    if (red.length < 2 || blue.length < 2) {
+      io.to(hostId).emit('room:error', { message: 'Her takımda en az 2 oyuncu lazım!' });
+      return;
+    }
+    const redSpy = red.find(p => p.codenamesRole === 'spymaster');
+    const blueSpy = blue.find(p => p.codenamesRole === 'spymaster');
+    if (!redSpy || !blueSpy) {
+      io.to(hostId).emit('room:error', { message: 'Her takımda 1 Casus Şefi seçilmeli!' });
+      return;
+    }
+
+    // 25 random kelime seç
+    const shuffled = [...CODENAMES_WORDS].sort(() => Math.random() - 0.5);
+    const words = shuffled.slice(0, 25);
+
+    // Roller: ilk takım 9, diğer 8, 7 sivil, 1 suikastçi
+    const roles = [];
+    for (let i = 0; i < 9; i++) roles.push(firstTeam);
+    for (let i = 0; i < 8; i++) roles.push(firstTeam === 'red' ? 'blue' : 'red');
+    for (let i = 0; i < 7; i++) roles.push('civilian');
+    roles.push('assassin');
+    roles.sort(() => Math.random() - 0.5);
+
+    state.board = words.map((w, i) => ({ word: w, role: roles[i], revealed: false }));
+    state.teams = { red: red.map(p => p.id), blue: blue.map(p => p.id) };
+    state.spymasters = { red: redSpy.id, blue: blueSpy.id };
+    state.currentTurn = firstTeam;
+    state.firstTeam = firstTeam;
+    state.phase = 'clueGiving';
+    state.remaining = {
+      red: firstTeam === 'red' ? 9 : 8,
+      blue: firstTeam === 'blue' ? 9 : 8
+    };
+    state.log = [`🎮 Oyun başladı! ${firstTeam === 'red' ? '🔴' : '🔵'} takım ilk hamleyi yapacak.`];
+    broadcastRoom(room.code);
+  },
+
+  giveClue(room, playerId, word, count) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'clueGiving') return;
+    const team = state.currentTurn;
+    if (state.spymasters[team] !== playerId) return; // Sadece aktif takımın casus şefi
+
+    word = (word || '').toString().trim().slice(0, 30);
+    count = parseInt(count) || 0;
+    if (!word) return;
+    if (count < 0 || count > 9) return;
+    // İpucu kelime board'da olmamalı (revealed olsa bile — kuralı sıkı tut)
+    const lowerWord = word.toLocaleLowerCase('tr-TR');
+    const inBoard = state.board.some(c => c.word.toLocaleLowerCase('tr-TR') === lowerWord);
+    if (inBoard) {
+      io.to(playerId).emit('room:error', { message: 'İpucu, tahtadaki kelimelerden olamaz!' });
+      return;
+    }
+
+    state.currentClue = { word, count, given: true };
+    state.phase = 'guessing';
+    state.guessesLeft = count + 1; // +1 ekstra tahmin hakkı (klasik kural)
+    state.log.unshift(`💡 ${team.toUpperCase()} Casus Şefi: "${word}" — ${count}`);
+    if (state.log.length > 12) state.log.pop();
+    broadcastRoom(room.code);
+  },
+
+  guessCard(room, playerId, cardIndex) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'guessing') return;
+    const team = state.currentTurn;
+    // Aktif takımın casus şefi olmayan üyeleri tahmin yapabilir
+    if (!state.teams[team].includes(playerId)) return;
+    if (state.spymasters[team] === playerId) return;
+
+    const card = state.board[cardIndex];
+    if (!card || card.revealed) return;
+
+    card.revealed = true;
+    const player = room.players.find(p => p.id === playerId);
+    state.log.unshift(`${team === 'red' ? '🔴' : '🔵'} ${player?.name} açtı: ${card.word} → ${this.roleLabel(card.role)}`);
+    if (state.log.length > 12) state.log.pop();
+
+    if (card.role === 'assassin') {
+      // Suikastçi açıldı → o takım kaybetti
+      state.phase = 'gameOver';
+      state.gameOver = true;
+      state.winner = team === 'red' ? 'blue' : 'red';
+      state.loseReason = 'assassin';
+      state.log.unshift(`💀 SUİKASTÇİ! ${team.toUpperCase()} kaybetti!`);
+      // Puan
+      room.players.forEach(p => {
+        if (p.codenamesTeam === state.winner) p.score += 1;
+      });
+      broadcastRoom(room.code);
+      return;
+    }
+
+    if (card.role === 'red' || card.role === 'blue') {
+      state.remaining[card.role]--;
+      // Kazanma kontrolü
+      if (state.remaining[card.role] === 0) {
+        state.phase = 'gameOver';
+        state.gameOver = true;
+        state.winner = card.role;
+        state.log.unshift(`🏆 ${card.role.toUpperCase()} kazandı!`);
+        room.players.forEach(p => {
+          if (p.codenamesTeam === state.winner) p.score += 1;
+        });
+        broadcastRoom(room.code);
+        return;
+      }
+    }
+
+    // Sıra mı geçer?
+    let switchTurn = false;
+    if (card.role !== team) {
+      // Yanlış (rakip / sivil) → sıra geçer
+      switchTurn = true;
+    } else {
+      // Doğru → tahmin hakkı azalır
+      state.guessesLeft--;
+      if (state.guessesLeft <= 0) switchTurn = true;
+    }
+
+    if (switchTurn) {
+      this._switchTurn(room);
+    }
+
+    broadcastRoom(room.code);
+  },
+
+  passGuess(room, playerId) {
+    // Aktif takımın herhangi bir üyesi pas geçebilir
+    const state = room.gameState;
+    if (!state || state.phase !== 'guessing') return;
+    const team = state.currentTurn;
+    if (!state.teams[team].includes(playerId)) return;
+    if (state.spymasters[team] === playerId) return;
+    const player = room.players.find(p => p.id === playerId);
+    state.log.unshift(`⏭️ ${team === 'red' ? '🔴' : '🔵'} ${player?.name} pas geçti`);
+    if (state.log.length > 12) state.log.pop();
+    this._switchTurn(room);
+    broadcastRoom(room.code);
+  },
+
+  _switchTurn(room) {
+    const state = room.gameState;
+    state.currentTurn = state.currentTurn === 'red' ? 'blue' : 'red';
+    state.phase = 'clueGiving';
+    state.currentClue = null;
+    state.guessesLeft = 0;
+  },
+
+  roleLabel(role) {
+    return { red: '🔴 Kırmızı', blue: '🔵 Mavi', civilian: '⚪ Sivil', assassin: '💀 Suikastçi' }[role] || '?';
+  },
+
+  stop(room) {
+    // Timer yok
+  }
+};
+
+// ============================================================
+// EMOJİ TAHMİN
+// ============================================================
+let EMOJI_POOL = [];
+try {
+  EMOJI_POOL = require('./data/emoji-pool');
+  console.log(`Emoji Tahmin havuzu: ${EMOJI_POOL.length} bilmece`);
+} catch (e) {
+  console.warn('Emoji havuzu yüklenemedi:', e.message);
+}
+
+const EmojiTahmin = {
+  start(room) {
+    const s = room.settings?.emoji || {};
+    const questionTime = Math.max(10, Math.min(60, s.questionTime || 30));
+    const totalQuestions = Math.max(5, Math.min(30, s.totalQuestions || 10));
+    const acceptClose = s.acceptClose !== false;
+    const firstBonus = s.firstBonus !== false;
+    const category = s.category || 'karisik';
+
+    let pool = EMOJI_POOL;
+    if (category !== 'karisik') {
+      const filtered = EMOJI_POOL.filter(q => q.category === category);
+      if (filtered.length >= 3) pool = filtered;
+    }
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    const selected = shuffled.slice(0, totalQuestions);
+
+    room.players.forEach(p => { p.score = 0; p.eliminated = false; });
+
+    room.gameState = {
+      type: 'emoji',
+      questions: selected.map(q => ({ emojis: q.emojis, answer: q.answer, aliases: q.aliases || [], category: q.category })),
+      currentIndex: 0,
+      currentQuestion: null,
+      timeLeft: questionTime,
+      questionTime,
+      totalQuestions: selected.length,
+      timerId: null,
+      phase: 'question',
+      acceptClose,
+      firstBonus,
+      correctGuessers: [],   // [{ playerId, time, points }]
+      guesses: [],           // chat-like
+      revealed: false,
+      lastResults: null,
+      gameOver: false,
+      winner: null
+    };
+    this.startQuestion(room);
+  },
+
+  startQuestion(room) {
+    const state = room.gameState;
+    if (state.timerId) clearInterval(state.timerId);
+    const q = state.questions[state.currentIndex];
+    state.currentQuestion = {
+      number: state.currentIndex + 1,
+      total: state.totalQuestions,
+      emojis: q.emojis,
+      category: q.category
+    };
+    state.timeLeft = state.questionTime;
+    state.phase = 'question';
+    state.correctGuessers = [];
+    state.guesses = [];
+    state.revealed = false;
+    state.lastResults = null;
+
+    state.timerId = setInterval(() => {
+      state.timeLeft--;
+      io.to(room.code).emit('emoji:timer', { timeLeft: state.timeLeft });
+      if (state.timeLeft <= 0) {
+        this.revealAnswer(room);
+      }
+    }, 1000);
+    broadcastRoom(room.code);
+  },
+
+  // Yakın eşleşme — basit Levenshtein
+  _close(a, b) {
+    a = a.toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+    b = b.toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+    if (a === b) return true;
+    if (Math.abs(a.length - b.length) > 2) return false;
+    // Levenshtein distance
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1];
+        else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      }
+    }
+    return dp[m][n] <= 1;
+  },
+
+  guess(room, playerId, text) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'question') return;
+    const player = room.players.find(p => p.id === playerId);
+    if (!player) return;
+    if (state.correctGuessers.some(g => g.playerId === playerId)) return; // zaten bildi
+
+    text = (text || '').toString().trim().slice(0, 50);
+    if (!text) return;
+    const q = state.questions[state.currentIndex];
+
+    const normalize = (s) => s.toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+    const norm = normalize(text);
+    const target = normalize(q.answer);
+    const aliases = (q.aliases || []).map(normalize);
+
+    let correct = false;
+    if (norm === target || aliases.includes(norm)) correct = true;
+    else if (state.acceptClose && (this._close(norm, target) || aliases.some(a => this._close(norm, a)))) correct = true;
+
+    if (correct) {
+      const ratio = state.timeLeft / state.questionTime;
+      const base = 6 + Math.round(14 * ratio); // 6-20
+      const firstBonus = (state.firstBonus && state.correctGuessers.length === 0) ? 5 : 0;
+      const points = base + firstBonus;
+      player.score += points;
+      state.correctGuessers.push({ playerId, time: state.questionTime - state.timeLeft, points });
+      state.guesses.push({ player: player.name, text: `✅ ${player.name} bildi! (+${points})`, correct: true });
+      // Tüm aktif oyuncular bildiyse erken bitir (çizen yok, herkes oynar)
+      if (state.correctGuessers.length >= room.players.length) {
+        this.revealAnswer(room);
+        return;
+      }
+      broadcastRoom(room.code);
+    } else {
+      state.guesses.push({ player: player.name, text, correct: false });
+      if (state.guesses.length > 30) state.guesses.shift();
+      broadcastRoom(room.code);
+    }
+  },
+
+  revealAnswer(room) {
+    const state = room.gameState;
+    if (!state) return;
+    if (state.timerId) clearInterval(state.timerId);
+    state.phase = 'reveal';
+    state.revealed = true;
+    const q = state.questions[state.currentIndex];
+    state.lastResults = {
+      answer: q.answer,
+      emojis: q.emojis,
+      correctGuessers: state.correctGuessers.map(g => ({
+        playerId: g.playerId,
+        playerName: room.players.find(p => p.id === g.playerId)?.name || '?',
+        points: g.points
+      }))
+    };
+    broadcastRoom(room.code);
+
+    setTimeout(() => {
+      if (!rooms[room.code] || rooms[room.code].game !== 'emoji') return;
+      state.currentIndex++;
+      if (state.currentIndex >= state.totalQuestions) {
+        state.gameOver = true;
+        state.phase = 'gameOver';
+        const sorted = [...room.players].sort((a, b) => b.score - a.score);
+        state.winner = sorted[0]?.name || null;
+        broadcastRoom(room.code);
+      } else {
+        this.startQuestion(room);
+      }
+    }, 4500);
+  },
+
+  stop(room) {
+    if (room.gameState?.timerId) clearInterval(room.gameState.timerId);
+  }
+};
+
+// ============================================================
+// ŞEHİR-İSİM-HAYVAN
+// ============================================================
+const SehirIsimHayvan = {
+  CATS: {
+    hayvan: { label: 'Hayvan', icon: '🦁' },
+    isim:   { label: 'İsim',   icon: '👤' },
+    sehir:  { label: 'Şehir',  icon: '🏙️' },
+    ulke:   { label: 'Ülke',   icon: '🌍' },
+    yemek:  { label: 'Yemek',  icon: '🍕' },
+    bitki:  { label: 'Bitki',  icon: '🌿' },
+    esya:   { label: 'Eşya',   icon: '🪑' },
+    renk:   { label: 'Renk',   icon: '🎨' },
+    marka:  { label: 'Marka',  icon: '🚗' }
+  },
+
+  // Türkçe ile uyumlu harfler — q/w/x yok, ama "i"/"ı" var
+  LETTERS: ['a','b','c','ç','d','e','f','g','h','ı','i','j','k','l','m','n','o','ö','p','r','s','ş','t','u','ü','v','y','z'],
+
+  start(room) {
+    const s = room.settings?.sih || {};
+    const roundCount = Math.max(1, Math.min(20, s.roundCount || 5));
+    const roundTime  = Math.max(20, Math.min(180, s.roundTime || 60));
+    const letterMode = s.letterMode === 'host' ? 'host' : 'random';
+    const autoValidate = s.autoValidate !== false;
+    // Aktif kategoriler — settings.activeCategories array veya default
+    let active = Array.isArray(s.activeCategories) ? s.activeCategories.filter(c => this.CATS[c]) : null;
+    if (!active || active.length === 0) active = ['hayvan', 'isim', 'sehir'];
+
+    room.players.forEach(p => { p.score = 0; p.eliminated = false; });
+
+    room.gameState = {
+      type: 'sih',
+      roundCount,
+      roundTime,
+      roundIndex: 0,
+      currentLetter: null,
+      activeCategories: active,
+      autoValidate,
+      letterMode,
+      phase: 'letterPick',   // 'letterPick' | 'writing' | 'scoring' | 'gameOver'
+      timeLeft: 0,
+      timerId: null,
+      answers: {},           // { playerId: { [cat]: 'kelime' } }
+      submitted: {},         // { playerId: true } - bu turu kilitleyenler
+      lastRoundResults: null,
+      usedLetters: [],
+      gameOver: false,
+      winner: null
+    };
+
+    this.nextRound(room);
+  },
+
+  nextRound(room) {
+    const state = room.gameState;
+    if (!state) return;
+    if (state.timerId) clearInterval(state.timerId);
+
+    if (state.roundIndex >= state.roundCount) {
+      this.endGame(room);
+      return;
+    }
+
+    state.answers = {};
+    state.submitted = {};
+    state.lastRoundResults = null;
+    state.currentLetter = null;
+
+    // Random modda harfi otomatik seç ve writing'e geç
+    if (state.letterMode === 'random') {
+      const avail = this.LETTERS.filter(l => !state.usedLetters.includes(l));
+      const pool = avail.length > 0 ? avail : this.LETTERS;
+      state.currentLetter = pool[Math.floor(Math.random() * pool.length)];
+      state.usedLetters.push(state.currentLetter);
+      this.startWriting(room);
+    } else {
+      // Host moda → letterPick fazı (host harf seçer)
+      state.phase = 'letterPick';
+      state.timeLeft = 0;
+      broadcastRoom(room.code);
+    }
+  },
+
+  pickLetter(room, playerId, letter) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'letterPick') return;
+    if (room.host !== playerId) return;
+    letter = (letter || '').toLocaleLowerCase('tr-TR');
+    if (!this.LETTERS.includes(letter)) return;
+    state.currentLetter = letter;
+    state.usedLetters.push(letter);
+    this.startWriting(room);
+  },
+
+  startWriting(room) {
+    const state = room.gameState;
+    state.phase = 'writing';
+    state.roundIndex++;
+    state.timeLeft = state.roundTime;
+    if (state.timerId) clearInterval(state.timerId);
+    state.timerId = setInterval(() => {
+      state.timeLeft--;
+      io.to(room.code).emit('sih:timer', { timeLeft: state.timeLeft });
+      if (state.timeLeft <= 0) {
+        clearInterval(state.timerId);
+        this.endRound(room);
+      }
+    }, 1000);
+    broadcastRoom(room.code);
+  },
+
+  submitAnswers(room, playerId, answers) {
+    const state = room.gameState;
+    if (!state || state.phase !== 'writing') return;
+    const player = room.players.find(p => p.id === playerId);
+    if (!player) return;
+    // Cevapları temizle/limit
+    const clean = {};
+    for (const cat of state.activeCategories) {
+      const v = (answers?.[cat] || '').toString().trim().toLocaleLowerCase('tr-TR').slice(0, 40);
+      clean[cat] = v;
+    }
+    state.answers[playerId] = clean;
+    state.submitted[playerId] = true;
+
+    // STOP mekaniği yok ama herkes kilitledi mi diye bak
+    const activePlayers = room.players.filter(p => !p.eliminated);
+    if (Object.keys(state.submitted).length >= activePlayers.length) {
+      // Herkes gönderdi → turu erken bitir
+      if (state.timerId) clearInterval(state.timerId);
+      this.endRound(room);
+    } else {
+      broadcastRoom(room.code);
+    }
+  },
+
+  // Bir cevap geçerli mi?
+  validateAnswer(cat, word, letter) {
+    if (!word) return false;
+    if (word[0] !== letter) return false;
+    // Sadece harf
+    if (!/^[a-zçğıöşüâîû ]+$/i.test(word)) return false;
+    const set = CATEGORIES[cat];
+    if (!set || set.size === 0) {
+      // Kategori havuzu yoksa sözlüğe bak (genel geçer fallback)
+      return DICTIONARY.has(word);
+    }
+    if (set.has(word)) return true;
+    // İsim için: havuzda yoksa esnek kontrol — sözlük yardımı zayıf
+    if (cat === 'isim') {
+      // Uzunluğu 3+ olan ve sadece harf olan + sözlükte olmasa bile kabul edilebilir, ama strict mode
+      return false;
+    }
+    return false;
+  },
+
+  endRound(room) {
+    const state = room.gameState;
+    if (!state) return;
+    if (state.timerId) clearInterval(state.timerId);
+    state.phase = 'scoring';
+
+    const letter = state.currentLetter;
+    const cats = state.activeCategories;
+    const activePlayers = room.players.filter(p => !p.eliminated);
+
+    // Her kategori için cevapları toparla
+    const perCatAnswers = {}; // { cat: { 'word': [playerId, ...] } }
+    for (const cat of cats) perCatAnswers[cat] = {};
+
+    for (const p of activePlayers) {
+      const ans = state.answers[p.id] || {};
+      for (const cat of cats) {
+        const w = ans[cat] || '';
+        let valid = false;
+        if (state.autoValidate) {
+          valid = this.validateAnswer(cat, w, letter);
+        } else {
+          // Manuel mod: sadece harf eşleşmesi + boş değil
+          valid = w && w[0] === letter && /^[a-zçğıöşüâîû ]+$/i.test(w);
+        }
+        if (!valid) continue;
+        if (!perCatAnswers[cat][w]) perCatAnswers[cat][w] = [];
+        perCatAnswers[cat][w].push(p.id);
+      }
+    }
+
+    // Puanlama
+    const scores = {}; // { playerId: { perCat: {cat:points}, total:int } }
+    for (const p of activePlayers) {
+      scores[p.id] = { perCat: {}, total: 0 };
+    }
+
+    let fullBonusCandidates = new Set(activePlayers.map(p => p.id));
+    for (const cat of cats) {
+      const cleanCat = perCatAnswers[cat];
+      for (const word in cleanCat) {
+        const players = cleanCat[word];
+        const pts = (players.length === 1) ? 10 : 5;
+        for (const pid of players) {
+          scores[pid].perCat[cat] = pts;
+          scores[pid].total += pts;
+        }
+      }
+      // Tam bonus için: bu kategoride puan almayanları çıkar
+      fullBonusCandidates.forEach(pid => {
+        if (!scores[pid].perCat[cat]) fullBonusCandidates.delete(pid);
+      });
+    }
+
+    // Tam bonus (tüm kategorilerde puan aldı) → +15
+    fullBonusCandidates.forEach(pid => {
+      scores[pid].total += 15;
+      scores[pid].fullBonus = true;
+    });
+
+    // Skorları oyuncuya işle
+    for (const p of activePlayers) {
+      p.score += scores[p.id].total;
+    }
+
+    // Sonuçları paketle (UI için)
+    state.lastRoundResults = {
+      letter,
+      categories: cats,
+      perCatAnswers,    // {cat: {word: [playerNames]}}
+      scoresByPlayer: scores,
+      playerNames: Object.fromEntries(room.players.map(p => [p.id, p.name]))
+    };
+
+    broadcastRoom(room.code);
+
+    // 7sn sonra sonraki tura
+    setTimeout(() => {
+      if (!rooms[room.code] || rooms[room.code].game !== 'sih') return;
+      this.nextRound(room);
+    }, 7000);
+  },
+
+  endGame(room) {
+    const state = room.gameState;
+    if (!state) return;
+    state.phase = 'gameOver';
+    state.gameOver = true;
+    if (state.timerId) clearInterval(state.timerId);
+    const sorted = [...room.players].sort((a, b) => b.score - a.score);
+    state.winner = sorted[0]?.name || null;
+    broadcastRoom(room.code);
+  },
+
+  stop(room) {
+    if (room.gameState?.timerId) clearInterval(room.gameState.timerId);
+  }
+};
+
 const UnoOyun = {
   COLORS: ['kirmizi', 'sari', 'yesil', 'mavi'],
   NUMBERS: ['0','1','2','3','4','5','6','7','8','9'],
@@ -2439,6 +3140,904 @@ const UnoOyun = {
 };
 
 // ============================================================
+// ŞEHİR YARIŞI (Türkiye temalı emlak oyunu)
+// ============================================================
+const SY_DATA = require('./data/syarisi-board');
+const SY_CARDS = require('./data/syarisi-cards');
+
+const TOKEN_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#1abc9c', '#e67e22', '#34495e'];
+
+function _syShuffle(n) {
+  const arr = Array.from({ length: n }, (_, i) => i);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+const SehirYarisi = {
+  start(room) {
+    const s = room.settings?.syarisi || {};
+    const startingMoney = s.startingMoney || 1500;
+
+    const turnOrder = room.players.map(p => p.id);
+    // Random sıra
+    for (let i = turnOrder.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [turnOrder[i], turnOrder[j]] = [turnOrder[j], turnOrder[i]];
+    }
+
+    const players = room.players.map((p, i) => ({
+      id: p.id,
+      name: p.name,
+      money: startingMoney,
+      position: 0,
+      jailTurns: 0,
+      getOutCards: 0,
+      bankrupt: false,
+      color: TOKEN_COLORS[i % TOKEN_COLORS.length]
+    }));
+
+    const squares = SY_DATA.BOARD.map(sq => ({
+      idx: sq.idx,
+      ownerId: null,
+      houses: 0,
+      hotel: false,
+      mortgaged: false
+    }));
+
+    room.gameState = {
+      type: 'syarisi',
+      phase: 'rolling',
+      turnPlayerId: turnOrder[0],
+      turnOrder,
+      dice: [0, 0],
+      doublesCount: 0,
+      lastRoll: null,
+      players,
+      squares,
+      parkingPot: 0,
+      chanceDeck: _syShuffle(SY_CARDS.CHANCE.length),
+      ccDeck: _syShuffle(SY_CARDS.COMMUNITY_CHEST.length),
+      pendingCard: null,
+      pendingBuy: null,
+      auction: null,
+      log: [`🎮 Şehir Yarışı başladı! İlk sıra: ${players.find(p => p.id === turnOrder[0])?.name}`],
+      gameOver: false,
+      winner: null
+    };
+    broadcastRoom(room.code);
+    return true;
+  },
+
+  rollDice(room, playerId) {
+    const st = room.gameState;
+    if (!st || st.phase !== 'rolling') return;
+    if (st.turnPlayerId !== playerId) return;
+
+    const player = st.players.find(p => p.id === playerId);
+    if (!player || player.bankrupt) return;
+
+    const d1 = 1 + Math.floor(Math.random() * 6);
+    const d2 = 1 + Math.floor(Math.random() * 6);
+    st.dice = [d1, d2];
+    st.lastRoll = d1 + d2;
+    const isDoubles = d1 === d2;
+
+    // Hapisteki oyuncu
+    if (player.jailTurns > 0) {
+      if (isDoubles) {
+        player.jailTurns = 0;
+        st.doublesCount = 0;  // hapisten çıkış doublesı sayılmaz
+        this._addLog(st, `🎲 ${player.name} çift attı (${d1}+${d2}) — hapisten çıktı!`);
+        this._movePlayer(room, player, d1 + d2, true);
+      } else {
+        player.jailTurns++;
+        this._addLog(st, `🎲 ${player.name} zar attı (${d1}+${d2}) — hapiste kaldı (tur ${player.jailTurns}/3)`);
+        if (player.jailTurns > 3) {
+          // 3 turdan sonra ceza öde, zorla çık
+          if (player.money >= 50) {
+            player.money -= 50;
+            this._addLog(st, `🔓 ${player.name} 50₺ ödeyip hapisten zorla çıktı`);
+            player.jailTurns = 0;
+            this._movePlayer(room, player, d1 + d2, true);
+          } else {
+            this._addLog(st, `💸 ${player.name} parası yetmedi → iflas riski`);
+            this._handleDebt(room, player, 50, null);
+            // Eğer iflas etmediyse hapisten çıkar
+            if (!player.bankrupt) {
+              player.jailTurns = 0;
+              this._movePlayer(room, player, d1 + d2, true);
+            } else {
+              this._endTurn(room);
+            }
+          }
+        } else {
+          // Sırayı sonlandır
+          st.phase = 'rolling';
+          this._endTurn(room);
+        }
+        broadcastRoom(room.code);
+        return;
+      }
+    } else {
+      // Normal zar atışı
+      if (isDoubles) {
+        st.doublesCount++;
+        if (st.doublesCount >= 3) {
+          this._addLog(st, `🚔 ${player.name} 3. çift! Hapse gidiyor.`);
+          this._goToJail(st, player);
+          st.doublesCount = 0;
+          this._endTurn(room);
+          broadcastRoom(room.code);
+          return;
+        }
+      } else {
+        st.doublesCount = 0;
+      }
+      this._addLog(st, `🎲 ${player.name} zar attı: ${d1}+${d2} = ${d1 + d2}${isDoubles ? ' (çift!)' : ''}`);
+      this._movePlayer(room, player, d1 + d2, true);
+    }
+    broadcastRoom(room.code);
+  },
+
+  _movePlayer(room, player, steps, collectGo) {
+    const st = room.gameState;
+    const newPos = (player.position + steps) % 40;
+    const passedGo = (player.position + steps) >= 40 && collectGo;
+    player.position = newPos;
+    if (passedGo) {
+      const bonus = room.settings?.syarisi?.goBonus ?? 200;
+      player.money += bonus;
+      this._addLog(st, `💵 ${player.name} Başlangıç'tan geçti, ${bonus}₺ aldı`);
+    }
+    this._handleLanding(room, player);
+  },
+
+  _moveTo(room, player, targetIdx, collectGo) {
+    const st = room.gameState;
+    if (collectGo && targetIdx < player.position) {
+      const bonus = room.settings?.syarisi?.goBonus ?? 200;
+      player.money += bonus;
+      this._addLog(st, `💵 ${player.name} Başlangıç'tan geçti, ${bonus}₺ aldı`);
+    } else if (targetIdx === 0 && collectGo) {
+      const bonus = room.settings?.syarisi?.goBonus ?? 200;
+      player.money += bonus;
+    }
+    player.position = targetIdx;
+    this._handleLanding(room, player);
+  },
+
+  _handleLanding(room, player) {
+    const st = room.gameState;
+    const sq = SY_DATA.BOARD[player.position];
+    const ownState = st.squares[player.position];
+    this._addLog(st, `🚶 ${player.name} → ${sq.name}`);
+
+    if (sq.type === 'go') {
+      // Sadece Go karesinde durmak — bonus yok (zaten move sırasında verildi yoksa)
+    } else if (sq.type === 'property' || sq.type === 'airport' || sq.type === 'utility') {
+      if (!ownState.ownerId) {
+        // Boş mülk → satın alma kararı
+        st.pendingBuy = { propertyIdx: player.position };
+        st.phase = 'awaitBuy';
+        return;
+      } else if (ownState.ownerId !== player.id && !ownState.mortgaged) {
+        const owner = st.players.find(p => p.id === ownState.ownerId);
+        if (owner && !owner.bankrupt) {
+          // Owner hapisteyse kira alır mı? Klasik kuralda evet.
+          const rent = this._getRentDue(st, player.position, st.lastRoll, null);
+          this._addLog(st, `💰 ${player.name} → ${owner.name}'a ${rent}₺ kira`);
+          this._payOrBankrupt(room, player, owner, rent);
+        }
+      }
+    } else if (sq.type === 'tax') {
+      this._addLog(st, `🧾 ${player.name} ${sq.amount}₺ vergi ödüyor`);
+      const useParking = room.settings?.syarisi?.parkingPot;
+      if (player.money >= sq.amount) {
+        player.money -= sq.amount;
+        if (useParking) st.parkingPot += sq.amount;
+      } else {
+        this._handleDebt(room, player, sq.amount, null);
+        if (useParking && !player.bankrupt) st.parkingPot += sq.amount;
+      }
+    } else if (sq.type === 'chance' || sq.type === 'cc') {
+      this._drawAndApplyCard(room, player, sq.type);
+      // Eğer pendingBuy/auction set olduysa fazı bozma
+      if (st.phase === 'awaitBuy' || st.gameOver) return;
+    } else if (sq.type === 'jail') {
+      // Sadece ziyaret
+    } else if (sq.type === 'parking') {
+      const useParking = room.settings?.syarisi?.parkingPot;
+      if (useParking && st.parkingPot > 0) {
+        this._addLog(st, `🅿️ ${player.name} ücretsiz parktan ${st.parkingPot}₺ aldı!`);
+        player.money += st.parkingPot;
+        st.parkingPot = 0;
+      }
+    } else if (sq.type === 'goToJail') {
+      this._goToJail(st, player);
+      st.doublesCount = 0;
+      this._endTurn(room);
+    }
+  },
+
+  _drawAndApplyCard(room, player, deck) {
+    const st = room.gameState;
+    const deckArr = deck === 'chance' ? st.chanceDeck : st.ccDeck;
+    const cardPool = deck === 'chance' ? SY_CARDS.CHANCE : SY_CARDS.COMMUNITY_CHEST;
+    if (deckArr.length === 0) {
+      // Yeniden karıştır
+      const fresh = _syShuffle(cardPool.length);
+      if (deck === 'chance') st.chanceDeck = fresh; else st.ccDeck = fresh;
+    }
+    const cardIdx = (deck === 'chance' ? st.chanceDeck : st.ccDeck).shift();
+    const card = cardPool[cardIdx];
+    st.pendingCard = { deck, text: card.text, cardIdx };
+    this._addLog(st, `🎴 ${player.name} kart çekti: ${card.text}`);
+    this._applyCardEffect(room, player, card.effect, deck, cardIdx);
+  },
+
+  _applyCardEffect(room, player, effect, deck, cardIdx) {
+    const st = room.gameState;
+    const e = effect;
+    const cardPool = deck === 'chance' ? SY_CARDS.CHANCE : SY_CARDS.COMMUNITY_CHEST;
+    const deckArr = deck === 'chance' ? st.chanceDeck : st.ccDeck;
+
+    if (e.type === 'move') {
+      this._moveTo(room, player, e.to, e.collectGo);
+    } else if (e.type === 'moveBy') {
+      // Geri gitmek için negatif; Go bonus verilmez
+      const newPos = (player.position + e.n + 40) % 40;
+      player.position = newPos;
+      this._handleLanding(room, player);
+    } else if (e.type === 'moveNearest') {
+      const indexes = e.kind === 'airport' ? SY_DATA.AIRPORT_INDEXES : SY_DATA.UTILITY_INDEXES;
+      let nearest = indexes.find(i => i > player.position);
+      if (nearest === undefined) {
+        nearest = indexes[0];
+        // Go'dan geçer
+        const bonus = room.settings?.syarisi?.goBonus ?? 200;
+        player.money += bonus;
+      }
+      player.position = nearest;
+      // Burada özel kira çarpanı uygulanmalı
+      const ownState = st.squares[nearest];
+      if (ownState.ownerId && ownState.ownerId !== player.id && !ownState.mortgaged) {
+        const owner = st.players.find(p => p.id === ownState.ownerId);
+        const rent = this._getRentDue(st, nearest, st.lastRoll, { forceMult: e.rentMult });
+        this._addLog(st, `💰 ${player.name} → ${owner.name}'a ${rent}₺ özel kira (kart)`);
+        this._payOrBankrupt(room, player, owner, rent);
+      } else if (!ownState.ownerId) {
+        st.pendingBuy = { propertyIdx: nearest };
+        st.phase = 'awaitBuy';
+        return;
+      }
+    } else if (e.type === 'pay') {
+      this._addLog(st, `💸 ${player.name} ${e.amount}₺ ödüyor`);
+      if (player.money >= e.amount) {
+        player.money -= e.amount;
+        if (room.settings?.syarisi?.parkingPot) st.parkingPot += e.amount;
+      } else {
+        this._handleDebt(room, player, e.amount, null);
+      }
+    } else if (e.type === 'collect') {
+      player.money += e.amount;
+      this._addLog(st, `💵 ${player.name} ${e.amount}₺ kazandı`);
+    } else if (e.type === 'payAll') {
+      st.players.forEach(p => {
+        if (p.id !== player.id && !p.bankrupt) {
+          const amt = Math.min(player.money, e.amount);
+          if (player.money >= e.amount) {
+            player.money -= e.amount;
+            p.money += e.amount;
+          } else {
+            // Eksik kalırsa borç yönet
+            this._handleDebt(room, player, e.amount, p);
+          }
+        }
+      });
+      this._addLog(st, `💸 ${player.name} her oyuncuya ${e.amount}₺ ödedi`);
+    } else if (e.type === 'collectAll') {
+      let total = 0;
+      st.players.forEach(p => {
+        if (p.id !== player.id && !p.bankrupt) {
+          const amt = Math.min(p.money, e.amount);
+          p.money -= amt;
+          total += amt;
+        }
+      });
+      player.money += total;
+      this._addLog(st, `💵 ${player.name} herkesten toplam ${total}₺ topladı`);
+    } else if (e.type === 'jail') {
+      this._goToJail(st, player);
+      st.doublesCount = 0;
+      this._endTurn(room);
+    } else if (e.type === 'getOutFree') {
+      player.getOutCards++;
+      this._addLog(st, `🎫 ${player.name} hapisten çıkış kartı kazandı`);
+      // Kartı destenin dışına çıkar — discard'a koyma, oyuncuda sakla
+      return; // deste'ye iade etme
+    } else if (e.type === 'payPerProp') {
+      let totalHouses = 0, totalHotels = 0;
+      st.squares.forEach(s => {
+        if (s.ownerId === player.id) {
+          if (s.hotel) totalHotels++;
+          else totalHouses += s.houses;
+        }
+      });
+      const cost = totalHouses * e.perHouse + totalHotels * e.perHotel;
+      if (cost > 0) {
+        this._addLog(st, `🔧 ${player.name} bakım ücreti: ${totalHouses} ev × ${e.perHouse}₺ + ${totalHotels} otel × ${e.perHotel}₺ = ${cost}₺`);
+        if (player.money >= cost) player.money -= cost;
+        else this._handleDebt(room, player, cost, null);
+      } else {
+        this._addLog(st, `🔧 ${player.name}: bakım yok (mülk yok)`);
+      }
+    }
+
+    // Kartı discard'a iade (getOutFree hariç)
+    if (e.type !== 'getOutFree') {
+      // Deste başlığına ekle (basit yaklaşım: discard yığını yok, sona koy)
+      if (deck === 'chance') st.chanceDeck.push(cardIdx);
+      else st.ccDeck.push(cardIdx);
+    }
+    st.pendingCard = null;
+  },
+
+  _getRentDue(st, squareIdx, diceRoll, opts) {
+    const sq = SY_DATA.BOARD[squareIdx];
+    const ownState = st.squares[squareIdx];
+    if (!ownState.ownerId || ownState.mortgaged) return 0;
+    const owner = st.players.find(p => p.id === ownState.ownerId);
+    if (!owner) return 0;
+
+    if (sq.type === 'property') {
+      if (ownState.hotel) return sq.rent[6];
+      if (ownState.houses > 0) return sq.rent[1 + ownState.houses];
+      // Tüm set sahipse 2× base
+      const ownsFull = this._ownsFullSet(st, owner.id, sq.color);
+      return ownsFull ? sq.rent[1] : sq.rent[0];
+    } else if (sq.type === 'airport') {
+      const count = SY_DATA.AIRPORT_INDEXES.filter(i => st.squares[i].ownerId === owner.id).length;
+      let rent = SY_DATA.AIRPORT_RENT[count] || 0;
+      if (opts?.forceMult) rent *= opts.forceMult;
+      return rent;
+    } else if (sq.type === 'utility') {
+      if (opts?.forceMult) return diceRoll * opts.forceMult;
+      const count = SY_DATA.UTILITY_INDEXES.filter(i => st.squares[i].ownerId === owner.id).length;
+      const mult = SY_DATA.UTILITY_MULT[count] || 0;
+      return diceRoll * mult;
+    }
+    return 0;
+  },
+
+  _ownsFullSet(st, playerId, color) {
+    const group = SY_DATA.COLOR_GROUPS[color];
+    if (!group) return false;
+    return group.every(idx => st.squares[idx].ownerId === playerId);
+  },
+
+  buyProperty(room, playerId) {
+    const st = room.gameState;
+    if (!st || st.phase !== 'awaitBuy') return;
+    if (st.turnPlayerId !== playerId) return;
+    if (!st.pendingBuy) return;
+    const idx = st.pendingBuy.propertyIdx;
+    const sq = SY_DATA.BOARD[idx];
+    const player = st.players.find(p => p.id === playerId);
+    if (!player || player.money < sq.price) {
+      io.to(playerId).emit('room:error', { message: 'Yeterli paran yok!' });
+      return;
+    }
+    player.money -= sq.price;
+    st.squares[idx].ownerId = playerId;
+    this._addLog(st, `🏠 ${player.name} ${sq.name}'ı ${sq.price}₺'a satın aldı`);
+    st.pendingBuy = null;
+    st.phase = 'rolling';
+    // Çift atmadıysa sıra geçer
+    const isDoubles = st.dice[0] === st.dice[1];
+    if (!isDoubles) {
+      this._endTurn(room);
+    }
+    broadcastRoom(room.code);
+  },
+
+  declineProperty(room, playerId) {
+    const st = room.gameState;
+    if (!st || st.phase !== 'awaitBuy') return;
+    if (st.turnPlayerId !== playerId) return;
+    if (!st.pendingBuy) return;
+    const idx = st.pendingBuy.propertyIdx;
+    const sq = SY_DATA.BOARD[idx];
+    const enableAuction = room.settings?.syarisi?.enableAuction !== false;
+
+    if (enableAuction && st.players.filter(p => !p.bankrupt).length >= 2) {
+      this._startAuction(room, idx);
+      return;
+    }
+
+    // Açık artırma yoksa direkt geç
+    this._addLog(st, `❌ ${SY_DATA.BOARD[idx].name} satın alınmadı.`);
+    st.pendingBuy = null;
+    st.phase = 'rolling';
+    const isDoubles = st.dice[0] === st.dice[1];
+    if (!isDoubles) this._endTurn(room);
+    broadcastRoom(room.code);
+  },
+
+  _startAuction(room, propertyIdx) {
+    const st = room.gameState;
+    const sq = SY_DATA.BOARD[propertyIdx];
+    st.pendingBuy = null;
+    st.phase = 'auction';
+    st.auction = {
+      propertyIdx,
+      currentBid: 0,
+      currentBidderId: null,
+      passed: [],  // pas geçenler
+      eligibleIds: st.players.filter(p => !p.bankrupt).map(p => p.id)
+    };
+    this._addLog(st, `🔨 ${sq.name} için açık artırma başladı! Başlangıç: 0₺`);
+    broadcastRoom(room.code);
+  },
+
+  placeBid(room, playerId, amount) {
+    const st = room.gameState;
+    if (!st || st.phase !== 'auction' || !st.auction) return;
+    const a = st.auction;
+    if (!a.eligibleIds.includes(playerId)) return;
+    if (a.passed.includes(playerId)) return;
+    amount = parseInt(amount) || 0;
+    if (amount <= a.currentBid) {
+      io.to(playerId).emit('room:error', { message: 'Teklif şu anki tekliften yüksek olmalı!' });
+      return;
+    }
+    const player = st.players.find(p => p.id === playerId);
+    if (!player || player.money < amount) {
+      io.to(playerId).emit('room:error', { message: 'Yeterli paran yok!' });
+      return;
+    }
+    a.currentBid = amount;
+    a.currentBidderId = playerId;
+    this._addLog(st, `💰 ${player.name}: ${amount}₺ teklif etti`);
+    this._checkAuctionEnd(room);
+    broadcastRoom(room.code);
+  },
+
+  passBid(room, playerId) {
+    const st = room.gameState;
+    if (!st || st.phase !== 'auction' || !st.auction) return;
+    const a = st.auction;
+    if (!a.eligibleIds.includes(playerId)) return;
+    if (a.passed.includes(playerId)) return;
+    a.passed.push(playerId);
+    const player = st.players.find(p => p.id === playerId);
+    this._addLog(st, `⏭️ ${player.name} pas geçti`);
+    this._checkAuctionEnd(room);
+    broadcastRoom(room.code);
+  },
+
+  _checkAuctionEnd(room) {
+    const st = room.gameState;
+    const a = st.auction;
+    const remaining = a.eligibleIds.filter(id => !a.passed.includes(id));
+    // Eğer 1 kişi kaldıysa ve teklifi varsa → kazandı
+    // Eğer 0 kaldıysa ama currentBidder varsa → kazandı
+    // Eğer 0 ve currentBidder yoksa → kimse almadı
+    if (remaining.length <= 1) {
+      const sq = SY_DATA.BOARD[a.propertyIdx];
+      if (a.currentBidderId) {
+        const winner = st.players.find(p => p.id === a.currentBidderId);
+        winner.money -= a.currentBid;
+        st.squares[a.propertyIdx].ownerId = winner.id;
+        this._addLog(st, `🏆 Açık artırma: ${winner.name} ${sq.name}'ı ${a.currentBid}₺'a aldı`);
+      } else {
+        this._addLog(st, `❌ ${sq.name} satılmadı`);
+      }
+      st.auction = null;
+      st.phase = 'rolling';
+      const isDoubles = st.dice[0] === st.dice[1];
+      if (!isDoubles) this._endTurn(room);
+    }
+  },
+
+  buildHouse(room, playerId, squareIdx) {
+    const st = room.gameState;
+    if (!st || st.gameOver) return;
+    const player = st.players.find(p => p.id === playerId);
+    if (!player || player.bankrupt) return;
+    const ownState = st.squares[squareIdx];
+    const sq = SY_DATA.BOARD[squareIdx];
+    if (sq.type !== 'property') return;
+    if (ownState.ownerId !== playerId) return;
+    if (!this._ownsFullSet(st, playerId, sq.color)) {
+      io.to(playerId).emit('room:error', { message: 'Önce o renk grubunun tamamına sahip olmalısın!' });
+      return;
+    }
+    // Hiçbiri ipotekli olmamalı
+    const groupIdxs = SY_DATA.COLOR_GROUPS[sq.color];
+    if (groupIdxs.some(i => st.squares[i].mortgaged)) {
+      io.to(playerId).emit('room:error', { message: 'Bu gruptaki ipotekli mülklerini geri al!' });
+      return;
+    }
+    // Eşit dağıtım kuralı: bu mülkteki ev sayısı, gruptakilerin minimum + 0 olmalı
+    const houseCount = (s) => s.hotel ? 5 : s.houses;
+    const minInGroup = Math.min(...groupIdxs.map(i => houseCount(st.squares[i])));
+    if (houseCount(ownState) > minInGroup) {
+      io.to(playerId).emit('room:error', { message: 'Eşit dağıtım: önce diğer mülkleri yükselt!' });
+      return;
+    }
+    if (ownState.hotel) {
+      io.to(playerId).emit('room:error', { message: 'Zaten otel var!' });
+      return;
+    }
+    if (player.money < sq.houseCost) {
+      io.to(playerId).emit('room:error', { message: 'Yeterli paran yok!' });
+      return;
+    }
+    player.money -= sq.houseCost;
+    if (ownState.houses < 4) {
+      ownState.houses++;
+      this._addLog(st, `🏘️ ${player.name} ${sq.name}'a ev inşa etti (${ownState.houses})`);
+    } else {
+      ownState.houses = 0;
+      ownState.hotel = true;
+      this._addLog(st, `🏨 ${player.name} ${sq.name}'a OTEL inşa etti!`);
+    }
+    broadcastRoom(room.code);
+  },
+
+  sellHouse(room, playerId, squareIdx) {
+    const st = room.gameState;
+    if (!st || st.gameOver) return;
+    const player = st.players.find(p => p.id === playerId);
+    const ownState = st.squares[squareIdx];
+    const sq = SY_DATA.BOARD[squareIdx];
+    if (sq.type !== 'property') return;
+    if (ownState.ownerId !== playerId) return;
+    if (!ownState.hotel && ownState.houses === 0) return;
+    // Eşit dağıtım: bu mülk max'taysa sat
+    const groupIdxs = SY_DATA.COLOR_GROUPS[sq.color];
+    const houseCount = (s) => s.hotel ? 5 : s.houses;
+    const maxInGroup = Math.max(...groupIdxs.map(i => houseCount(st.squares[i])));
+    if (houseCount(ownState) < maxInGroup) {
+      io.to(playerId).emit('room:error', { message: 'Eşit dağıtım: önce daha yüksek olan mülkten sat!' });
+      return;
+    }
+    const refund = Math.floor(sq.houseCost / 2);
+    if (ownState.hotel) {
+      ownState.hotel = false;
+      ownState.houses = 4;
+      player.money += refund;
+      this._addLog(st, `🏚️ ${player.name} ${sq.name} otelini sattı (+${refund}₺) → 4 ev kaldı`);
+    } else {
+      ownState.houses--;
+      player.money += refund;
+      this._addLog(st, `🏚️ ${player.name} ${sq.name}'tan ev sattı (+${refund}₺)`);
+    }
+    broadcastRoom(room.code);
+  },
+
+  mortgageProperty(room, playerId, squareIdx) {
+    const st = room.gameState;
+    if (!st || st.gameOver) return;
+    const player = st.players.find(p => p.id === playerId);
+    const ownState = st.squares[squareIdx];
+    const sq = SY_DATA.BOARD[squareIdx];
+    if (ownState.ownerId !== playerId) return;
+    if (ownState.mortgaged) return;
+    if (ownState.houses > 0 || ownState.hotel) {
+      io.to(playerId).emit('room:error', { message: 'Önce evleri/oteli sat!' });
+      return;
+    }
+    const mortgageVal = Math.floor((sq.price || 0) / 2);
+    if (mortgageVal <= 0) return;
+    ownState.mortgaged = true;
+    player.money += mortgageVal;
+    this._addLog(st, `📜 ${player.name} ${sq.name}'ı ipotek etti (+${mortgageVal}₺)`);
+    broadcastRoom(room.code);
+  },
+
+  unmortgageProperty(room, playerId, squareIdx) {
+    const st = room.gameState;
+    if (!st || st.gameOver) return;
+    const player = st.players.find(p => p.id === playerId);
+    const ownState = st.squares[squareIdx];
+    const sq = SY_DATA.BOARD[squareIdx];
+    if (ownState.ownerId !== playerId) return;
+    if (!ownState.mortgaged) return;
+    const interest = room.settings?.syarisi?.mortgageInterest ?? 10;
+    const cost = Math.floor((sq.price / 2) * (1 + interest / 100));
+    if (player.money < cost) {
+      io.to(playerId).emit('room:error', { message: `İpotek geri alma maliyeti: ${cost}₺` });
+      return;
+    }
+    player.money -= cost;
+    ownState.mortgaged = false;
+    this._addLog(st, `📜 ${player.name} ${sq.name} ipoteğini kaldırdı (-${cost}₺)`);
+    broadcastRoom(room.code);
+  },
+
+  payJailFine(room, playerId) {
+    const st = room.gameState;
+    if (!st) return;
+    const player = st.players.find(p => p.id === playerId);
+    if (!player || player.jailTurns === 0) return;
+    if (st.turnPlayerId !== playerId || st.phase !== 'rolling') return;
+    const fine = room.settings?.syarisi?.jailFine ?? 50;
+    if (player.money < fine) {
+      io.to(playerId).emit('room:error', { message: 'Yeterli paran yok!' });
+      return;
+    }
+    player.money -= fine;
+    player.jailTurns = 0;
+    this._addLog(st, `🔓 ${player.name} ${fine}₺ ceza ödeyip hapisten çıktı`);
+    broadcastRoom(room.code);
+  },
+
+  useGetOutCard(room, playerId) {
+    const st = room.gameState;
+    if (!st) return;
+    const player = st.players.find(p => p.id === playerId);
+    if (!player || player.jailTurns === 0 || player.getOutCards <= 0) return;
+    if (st.turnPlayerId !== playerId) return;
+    player.getOutCards--;
+    player.jailTurns = 0;
+    this._addLog(st, `🎫 ${player.name} hapisten çıkış kartı kullandı`);
+    broadcastRoom(room.code);
+  },
+
+  endTurn(room, playerId) {
+    const st = room.gameState;
+    if (!st || st.gameOver) return;
+    if (st.turnPlayerId !== playerId) return;
+    if (st.phase !== 'rolling') return;
+    // Çift atılırsa endTurn değil, oyuncu tekrar zar atmalı
+    const isDoubles = st.dice[0] === st.dice[1] && st.lastRoll !== null && st.doublesCount > 0;
+    if (isDoubles) {
+      io.to(playerId).emit('room:error', { message: 'Çift attın, tekrar zar atmalısın!' });
+      return;
+    }
+    this._endTurn(room);
+    broadcastRoom(room.code);
+  },
+
+  _endTurn(room) {
+    const st = room.gameState;
+    st.dice = [0, 0];
+    st.lastRoll = null;
+    st.doublesCount = 0;
+    st.pendingCard = null;
+    // Bir sonraki bankrupt olmayan oyuncuya geç
+    const order = st.turnOrder;
+    const currentIdx = order.indexOf(st.turnPlayerId);
+    let next = (currentIdx + 1) % order.length;
+    let guard = 0;
+    while (guard < order.length) {
+      const candidate = st.players.find(p => p.id === order[next]);
+      if (candidate && !candidate.bankrupt) {
+        st.turnPlayerId = candidate.id;
+        st.phase = 'rolling';
+        return;
+      }
+      next = (next + 1) % order.length;
+      guard++;
+    }
+    // Kimse kalmadı?
+    this._checkWin(room);
+  },
+
+  _goToJail(st, player) {
+    player.position = 10;
+    player.jailTurns = 1;
+    this._addLog(st, `🚔 ${player.name} hapse atıldı!`);
+  },
+
+  _payOrBankrupt(room, payer, receiver, amount) {
+    if (payer.money >= amount) {
+      payer.money -= amount;
+      if (receiver) receiver.money += amount;
+    } else {
+      this._handleDebt(room, payer, amount, receiver);
+    }
+  },
+
+  _handleDebt(room, payer, amount, receiver) {
+    const st = room.gameState;
+    // İlk olarak: ev/otel sat + ipotek dahil tüm net worth yeterli mi?
+    const liquidationValue = this._netWorth(st, payer);
+    if (liquidationValue + payer.money < amount) {
+      // İflas
+      this._declareBankrupt(room, payer, receiver, amount);
+      return;
+    }
+    // Otomatik olarak satmıyoruz; oyuncuya bildirim göster
+    // Basit yaklaşım: önce mümkün olanı satıp ödemeye çalış (otomatik)
+    // Daha gelişmiş: oyuncuya manage flag set, sırasını dondur. Şimdilik otomatik.
+    this._autoLiquidate(room, payer, amount);
+    if (payer.money >= amount) {
+      payer.money -= amount;
+      if (receiver) receiver.money += amount;
+    } else {
+      this._declareBankrupt(room, payer, receiver, amount);
+    }
+  },
+
+  _netWorth(st, player) {
+    let val = 0;
+    st.squares.forEach((s, idx) => {
+      if (s.ownerId === player.id) {
+        const sq = SY_DATA.BOARD[idx];
+        if (s.mortgaged) {
+          // Zaten ipotek edildi, ek değer yok
+        } else {
+          val += Math.floor((sq.price || 0) / 2); // ipotek değeri
+        }
+        if (s.houses > 0) val += s.houses * Math.floor(sq.houseCost / 2);
+        if (s.hotel) val += 5 * Math.floor(sq.houseCost / 2);
+      }
+    });
+    return val;
+  },
+
+  _autoLiquidate(room, player, neededAmount) {
+    const st = room.gameState;
+    // Önce evleri sat (en pahalıdan)
+    const ownedProps = st.squares.map((s, i) => ({ ...s, sq: SY_DATA.BOARD[i] }))
+      .filter(s => s.ownerId === player.id);
+    // Evleri/otelleri satma — color grubuna göre eşit dağıtım
+    const colorMap = {};
+    ownedProps.forEach(s => {
+      if (s.sq.type === 'property') {
+        if (!colorMap[s.sq.color]) colorMap[s.sq.color] = [];
+        colorMap[s.sq.color].push(s);
+      }
+    });
+    // Her grup içinde en yüksek seviyeli mülkten sat
+    let safety = 0;
+    while (player.money < neededAmount && safety < 100) {
+      safety++;
+      let sold = false;
+      Object.values(colorMap).forEach(group => {
+        if (player.money >= neededAmount) return;
+        const houseCount = (s) => s.hotel ? 5 : s.houses;
+        const maxLvl = Math.max(...group.map(houseCount));
+        if (maxLvl > 0) {
+          const target = group.find(s => houseCount(s) === maxLvl);
+          this.sellHouse(room, player.id, target.idx);
+          sold = true;
+        }
+      });
+      if (!sold) break;
+    }
+    // Hâlâ yetersizse mülk ipotek et
+    safety = 0;
+    while (player.money < neededAmount && safety < 50) {
+      safety++;
+      const candidate = ownedProps.find(s => {
+        const cur = st.squares[s.idx];
+        return !cur.mortgaged && cur.houses === 0 && !cur.hotel;
+      });
+      if (!candidate) break;
+      this.mortgageProperty(room, player.id, candidate.idx);
+    }
+  },
+
+  _declareBankrupt(room, payer, creditor, debt) {
+    const st = room.gameState;
+    payer.bankrupt = true;
+    this._addLog(st, `💀 ${payer.name} iflas etti!`);
+    // Tüm mülkler creditor'a ya da bankaya
+    st.squares.forEach((s, idx) => {
+      if (s.ownerId === payer.id) {
+        if (creditor) {
+          s.ownerId = creditor.id;
+          // İpotekli mülkleri otomatik geri alma — bırak ipotekli olarak
+        } else {
+          s.ownerId = null;
+          s.houses = 0;
+          s.hotel = false;
+          s.mortgaged = false;
+        }
+      }
+    });
+    if (creditor) creditor.money += payer.money;
+    payer.money = 0;
+    payer.getOutCards = 0;
+    // Kazanma kontrolü
+    this._checkWin(room);
+  },
+
+  _checkWin(room) {
+    const st = room.gameState;
+    const alive = st.players.filter(p => !p.bankrupt);
+    if (alive.length <= 1) {
+      st.gameOver = true;
+      st.phase = 'gameOver';
+      st.winner = alive[0]?.id || null;
+      this._addLog(st, `🏆 Oyun bitti! Kazanan: ${alive[0]?.name || '(yok)'}`);
+      // Skor güncelle
+      alive.forEach(p => {
+        const realPlayer = room.players.find(rp => rp.id === p.id);
+        if (realPlayer) realPlayer.score = (realPlayer.score || 0) + 1;
+      });
+    }
+  },
+
+  _addLog(st, msg) {
+    st.log.unshift(msg);
+    if (st.log.length > 30) st.log.pop();
+  },
+
+  // --- Takas ---
+  proposeTrade(room, fromId, toId, offer) {
+    const st = room.gameState;
+    if (!st || st.gameOver) return;
+    // offer: { money:int, properties:[idx], getOutCards:int }
+    // request: { money:int, properties:[idx], getOutCards:int }
+    if (!offer || typeof offer !== 'object') return;
+    const from = st.players.find(p => p.id === fromId);
+    const to = st.players.find(p => p.id === toId);
+    if (!from || !to || from.bankrupt || to.bankrupt || from.id === to.id) return;
+
+    // Validasyon
+    const give = offer.give || { money: 0, properties: [], getOutCards: 0 };
+    const want = offer.want || { money: 0, properties: [], getOutCards: 0 };
+    if ((give.money || 0) < 0 || (want.money || 0) < 0) return;
+    if ((give.money || 0) > from.money) return;
+    if ((want.money || 0) > to.money) return;
+    if ((give.getOutCards || 0) > from.getOutCards) return;
+    if ((want.getOutCards || 0) > to.getOutCards) return;
+    if (!Array.isArray(give.properties) || !Array.isArray(want.properties)) return;
+    const giveOk = give.properties.every(i => st.squares[i]?.ownerId === from.id && st.squares[i].houses === 0 && !st.squares[i].hotel);
+    const wantOk = want.properties.every(i => st.squares[i]?.ownerId === to.id && st.squares[i].houses === 0 && !st.squares[i].hotel);
+    if (!giveOk || !wantOk) return;
+
+    st.pendingTrade = { fromId, toId, give, want };
+    this._addLog(st, `🤝 ${from.name} → ${to.name} takas teklif etti`);
+    broadcastRoom(room.code);
+  },
+
+  respondTrade(room, playerId, accept) {
+    const st = room.gameState;
+    if (!st || !st.pendingTrade) return;
+    if (st.pendingTrade.toId !== playerId) return;
+    const t = st.pendingTrade;
+    const from = st.players.find(p => p.id === t.fromId);
+    const to = st.players.find(p => p.id === t.toId);
+    if (!from || !to) return;
+
+    if (!accept) {
+      this._addLog(st, `❌ ${to.name} takası reddetti`);
+      st.pendingTrade = null;
+      broadcastRoom(room.code);
+      return;
+    }
+
+    // Uygula
+    from.money -= (t.give.money || 0);
+    to.money   += (t.give.money || 0);
+    to.money   -= (t.want.money || 0);
+    from.money += (t.want.money || 0);
+    from.getOutCards -= (t.give.getOutCards || 0);
+    to.getOutCards   += (t.give.getOutCards || 0);
+    to.getOutCards   -= (t.want.getOutCards || 0);
+    from.getOutCards += (t.want.getOutCards || 0);
+    t.give.properties.forEach(i => { st.squares[i].ownerId = to.id; });
+    t.want.properties.forEach(i => { st.squares[i].ownerId = from.id; });
+
+    this._addLog(st, `✅ ${to.name} takası kabul etti`);
+    st.pendingTrade = null;
+    broadcastRoom(room.code);
+  },
+
+  stop(room) {
+    // Timer yok
+  }
+};
+
+// ============================================================
 // VARSAYILAN OYUN AYARLARI
 // ============================================================
 const DEFAULT_SETTINGS = {
@@ -2483,6 +4082,31 @@ const DEFAULT_SETTINGS = {
   },
   uno: {
     initialHand: 7
+  },
+  sih: {
+    roundCount: 5,
+    roundTime: 60,
+    letterMode: 'random',
+    autoValidate: true,
+    activeCategories: ['hayvan', 'isim', 'sehir']
+  },
+  emoji: {
+    questionTime: 30,
+    totalQuestions: 10,
+    acceptClose: true,
+    firstBonus: true,
+    category: 'karisik'
+  },
+  codenames: {
+    firstTeam: 'random' // 'random'|'red'|'blue'
+  },
+  syarisi: {
+    startingMoney: 1500,       // başlangıç parası (500-3000)
+    enableAuction: true,       // satın alınmayan mülk açık artırmaya çıksın mı
+    parkingPot: false,         // vergi/cezalar Ücretsiz Park'ta birikip oraya gelene veriliyor mu
+    goBonus: 200,              // Başlangıç'tan geçince alınacak para (100-400)
+    jailFine: 50,              // hapis cezası
+    mortgageInterest: 10       // ipotek geri alma faizi % (5-25)
   }
   // Amiral Battı'da ayar yok (klasik kurallar)
 };
@@ -2502,7 +4126,7 @@ io.on('connection', (socket) => {
     name = (name || '').trim().slice(0, 20) || 'Oyuncu';
     password = (password || '').toString().slice(0, 20);
     const code = generateRoomCode();
-    const player = { id: socket.id, name, score: 0, eliminated: false, ready: false };
+    const player = { id: socket.id, name, score: 0, eliminated: false, ready: false, codenamesTeam: null, codenamesRole: null };
     rooms[code] = {
       code,
       host: socket.id,
@@ -2548,7 +4172,7 @@ io.on('connection', (socket) => {
       socket.emit('room:error', { message: 'Oyun başlamış, bekleyin.' });
       return;
     }
-    const player = { id: socket.id, name, score: 0, eliminated: false, ready: false };
+    const player = { id: socket.id, name, score: 0, eliminated: false, ready: false, codenamesTeam: null, codenamesRole: null };
     room.players.push(player);
     socket.join(code);
     socket.emit('room:joined', { code, you: { id: socket.id, name } });
@@ -2651,7 +4275,32 @@ io.on('connection', (socket) => {
         jester: 'bool'
       },
       yilan: { duration: [30, 300], foodCount: [10, 60], speed: [2, 5] },
-      uno: { initialHand: [5, 10] }
+      uno: { initialHand: [5, 10] },
+      sih: {
+        roundCount: [1, 20],
+        roundTime: [20, 180],
+        letterMode: { values: ['random', 'host'] },
+        autoValidate: 'bool',
+        activeCategories: { array: true, allowed: ['hayvan','isim','sehir','ulke','yemek','bitki','esya','renk','marka'] }
+      },
+      emoji: {
+        questionTime: [10, 60],
+        totalQuestions: [5, 30],
+        acceptClose: 'bool',
+        firstBonus: 'bool',
+        category: { values: ['karisik', 'film', 'dizi', 'şarkı', 'marka', 'yemek', 'yer', 'deyim', 'kavram'] }
+      },
+      codenames: {
+        firstTeam: { values: ['random', 'red', 'blue'] }
+      },
+      syarisi: {
+        startingMoney: [500, 3000],
+        enableAuction: 'bool',
+        parkingPot: 'bool',
+        goBonus: [100, 400],
+        jailFine: [0, 200],
+        mortgageInterest: [0, 25]
+      }
     };
 
     const gameLimits = limits[gameType];
@@ -2667,6 +4316,10 @@ io.on('connection', (socket) => {
         room.settings[gameType][key] = Math.max(lim[0], Math.min(lim[1], Math.round(v)));
       } else if (typeof lim === 'object' && Array.isArray(lim.values) && typeof v === 'string') {
         if (lim.values.includes(v)) room.settings[gameType][key] = v;
+      } else if (typeof lim === 'object' && lim.array && Array.isArray(v)) {
+        // Allowed liste içinden filtrele, en az 1 kalmalı
+        const filtered = v.filter(item => typeof item === 'string' && lim.allowed.includes(item));
+        if (filtered.length > 0) room.settings[gameType][key] = filtered;
       }
     }
     broadcastRoom(room.code);
@@ -2711,6 +4364,14 @@ io.on('connection', (socket) => {
       } else if (gameType === 'uno') {
         const ok = UnoOyun.start(room);
         if (!ok) { room.game = null; broadcastRoom(room.code); return; }
+      } else if (gameType === 'sih') {
+        SehirIsimHayvan.start(room);
+      } else if (gameType === 'emoji') {
+        EmojiTahmin.start(room);
+      } else if (gameType === 'codenames') {
+        Codenames.start(room);
+      } else if (gameType === 'syarisi') {
+        SehirYarisi.start(room);
       }
     }, 3500);
   }
@@ -2954,6 +4615,153 @@ io.on('connection', (socket) => {
     UnoOyun.drawCard(result.room, socket.id);
   });
 
+  // --- Şehir-İsim-Hayvan ---
+  socket.on('sih:pickLetter', ({ letter }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'sih') return;
+    SehirIsimHayvan.pickLetter(result.room, socket.id, letter);
+  });
+  socket.on('sih:submit', ({ answers }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'sih') return;
+    SehirIsimHayvan.submitAnswers(result.room, socket.id, answers);
+  });
+
+  // --- Emoji Tahmin ---
+  socket.on('emoji:guess', ({ text }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'emoji') return;
+    EmojiTahmin.guess(result.room, socket.id, text);
+  });
+
+  // --- Codenames lobby takım seçimi ---
+  socket.on('codenames:joinTeam', ({ team }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { player, room } = result;
+    // Sadece setup fazında takım değiştirilebilir
+    if (room.game === 'codenames' && room.gameState?.phase && room.gameState.phase !== 'setup') {
+      socket.emit('room:error', { message: 'Oyun başladıktan sonra takım değiştirilemez!' });
+      return;
+    }
+    if (team !== 'red' && team !== 'blue' && team !== null) return;
+    // Önceki takımda spy idiyse rolünü bırak
+    if (player.codenamesTeam !== team) player.codenamesRole = null;
+    player.codenamesTeam = team;
+    broadcastRoom(room.code);
+  });
+
+  socket.on('codenames:setRole', ({ role }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result) return;
+    const { player, room } = result;
+    // Sadece setup fazında rol değiştirilebilir
+    if (room.game === 'codenames' && room.gameState?.phase && room.gameState.phase !== 'setup') {
+      socket.emit('room:error', { message: 'Oyun başladıktan sonra rol değiştirilemez!' });
+      return;
+    }
+    if (!player.codenamesTeam) return;
+    if (role !== 'spymaster' && role !== 'agent' && role !== null) return;
+    if (role === 'spymaster') {
+      // Aynı takımda başka spymaster varsa onun rolünü düşür
+      room.players.forEach(p => {
+        if (p.codenamesTeam === player.codenamesTeam && p.id !== player.id && p.codenamesRole === 'spymaster') {
+          p.codenamesRole = 'agent';
+        }
+      });
+    }
+    player.codenamesRole = role;
+    broadcastRoom(room.code);
+  });
+
+  // --- Codenames oyun-içi ---
+  socket.on('codenames:clue', ({ word, count }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'codenames') return;
+    Codenames.giveClue(result.room, socket.id, word, count);
+  });
+
+  socket.on('codenames:guess', ({ cardIndex }) => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'codenames') return;
+    Codenames.guessCard(result.room, socket.id, cardIndex);
+  });
+
+  socket.on('codenames:pass', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'codenames') return;
+    Codenames.passGuess(result.room, socket.id);
+  });
+
+  socket.on('codenames:beginRound', () => {
+    const result = findPlayerRoom(socket.id);
+    if (!result || result.room.game !== 'codenames') return;
+    Codenames.beginRound(result.room, socket.id);
+  });
+
+  // --- Şehir Yarışı ---
+  function _syRoom() {
+    const r = findPlayerRoom(socket.id);
+    if (!r || r.room.game !== 'syarisi') return null;
+    return r.room;
+  }
+  socket.on('sy:roll', () => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.rollDice(room, socket.id);
+  });
+  socket.on('sy:buy', () => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.buyProperty(room, socket.id);
+  });
+  socket.on('sy:decline', () => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.declineProperty(room, socket.id);
+  });
+  socket.on('sy:build', ({ squareIdx }) => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.buildHouse(room, socket.id, parseInt(squareIdx));
+  });
+  socket.on('sy:sellHouse', ({ squareIdx }) => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.sellHouse(room, socket.id, parseInt(squareIdx));
+  });
+  socket.on('sy:mortgage', ({ squareIdx }) => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.mortgageProperty(room, socket.id, parseInt(squareIdx));
+  });
+  socket.on('sy:unmortgage', ({ squareIdx }) => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.unmortgageProperty(room, socket.id, parseInt(squareIdx));
+  });
+  socket.on('sy:payJail', () => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.payJailFine(room, socket.id);
+  });
+  socket.on('sy:useCard', () => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.useGetOutCard(room, socket.id);
+  });
+  socket.on('sy:endTurn', () => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.endTurn(room, socket.id);
+  });
+  socket.on('sy:bid', ({ amount }) => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.placeBid(room, socket.id, amount);
+  });
+  socket.on('sy:passBid', () => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.passBid(room, socket.id);
+  });
+  socket.on('sy:proposeTrade', ({ toId, give, want }) => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.proposeTrade(room, socket.id, toId, { give, want });
+  });
+  socket.on('sy:respondTrade', ({ accept }) => {
+    const room = _syRoom(); if (!room) return;
+    SehirYarisi.respondTrade(room, socket.id, !!accept);
+  });
+
   // --- Bağlantı koptu ---
   socket.on('disconnect', () => {
     console.log('Ayrıldı:', socket.id);
@@ -2966,6 +4774,7 @@ function handleDisconnect(socket) {
     const room = rooms[code];
     const idx = room.players.findIndex(p => p.id === socket.id);
     if (idx !== -1) {
+      const leftId = socket.id;
       room.players.splice(idx, 1);
       socket.leave(code);
 
@@ -2976,8 +4785,13 @@ function handleDisconnect(socket) {
       }
 
       // Host ayrıldıysa yeni host ata
-      if (room.host === socket.id) {
+      if (room.host === leftId) {
         room.host = room.players[0].id;
+      }
+
+      // Codenames mid-game disconnect handling
+      if (room.game === 'codenames' && room.gameState && room.gameState.phase !== 'setup' && !room.gameState.gameOver) {
+        _codenamesHandleLeave(room, leftId);
       }
 
       // Oyun devam ediyorsa ve oyuncu eksilirse oyunu durdur (basit yaklaşım)
@@ -2990,6 +4804,68 @@ function handleDisconnect(socket) {
       broadcastRoom(code);
       return;
     }
+  }
+}
+
+// Codenames: bir oyuncu mid-game disconnect olursa state'i tutarlı tut
+function _codenamesHandleLeave(room, leftId) {
+  const state = room.gameState;
+  if (!state) return;
+
+  // teams listesinden çıkar
+  if (state.teams) {
+    if (state.teams.red) state.teams.red = state.teams.red.filter(id => id !== leftId);
+    if (state.teams.blue) state.teams.blue = state.teams.blue.filter(id => id !== leftId);
+  }
+
+  // Spymaster çıktı mı?
+  let leftSpyTeam = null;
+  if (state.spymasters?.red === leftId) leftSpyTeam = 'red';
+  else if (state.spymasters?.blue === leftId) leftSpyTeam = 'blue';
+
+  if (leftSpyTeam) {
+    // Takımda kalan bir agent var mı? → onu spymaster yap
+    const remainingTeammates = room.players.filter(p => p.codenamesTeam === leftSpyTeam);
+    if (remainingTeammates.length > 0) {
+      const newSpy = remainingTeammates[0];
+      newSpy.codenamesRole = 'spymaster';
+      state.spymasters[leftSpyTeam] = newSpy.id;
+      state.log.unshift(`🕵️ ${newSpy.name} → ${leftSpyTeam.toUpperCase()} takımının yeni Casus Şefi`);
+      // Eğer guessing fazındaysak ve yeni spy aktif takımdaysa, ipucuyu iptal edip clueGiving'e geri dön
+      if (state.phase === 'guessing' && state.currentTurn === leftSpyTeam) {
+        state.phase = 'clueGiving';
+        state.currentClue = null;
+        state.guessesLeft = 0;
+        state.log.unshift(`⚠️ Casus Şefi değişti, ipucu iptal edildi.`);
+      }
+    } else {
+      // Takım komple boşaldı → rakip kazanır
+      const winner = leftSpyTeam === 'red' ? 'blue' : 'red';
+      state.phase = 'gameOver';
+      state.gameOver = true;
+      state.winner = winner;
+      state.loseReason = 'abandoned';
+      state.log.unshift(`🏆 ${leftSpyTeam.toUpperCase()} takım dağıldı → ${winner.toUpperCase()} kazandı!`);
+      room.players.forEach(p => {
+        if (p.codenamesTeam === winner) p.score += 1;
+      });
+      return;
+    }
+  }
+
+  // Bir takım komple boşaldı mı? (spy çıkmamış olsa bile)
+  const redCount = room.players.filter(p => p.codenamesTeam === 'red').length;
+  const blueCount = room.players.filter(p => p.codenamesTeam === 'blue').length;
+  if (redCount === 0 || blueCount === 0) {
+    const winner = redCount === 0 ? 'blue' : 'red';
+    state.phase = 'gameOver';
+    state.gameOver = true;
+    state.winner = winner;
+    state.loseReason = 'abandoned';
+    state.log.unshift(`🏆 Rakip takım dağıldı → ${winner.toUpperCase()} kazandı!`);
+    room.players.forEach(p => {
+      if (p.codenamesTeam === winner) p.score += 1;
+    });
   }
 }
 

@@ -72,6 +72,9 @@
           <span class="game-chip">🐍 Yılan Savaşı</span>
           <span class="game-chip">⚓ Amiral Battı</span>
           <span class="game-chip">🃏 Uno Benzeri</span>
+          <span class="game-chip">🏙️ Şehir-İsim-Hayvan</span>
+          <span class="game-chip">🎭 Emoji Tahmin</span>
+          <span class="game-chip">🕵️ Codenames TR</span>
         </div>
       </div>
     </section>
@@ -186,6 +189,34 @@
               <h3>Uno Benzeri</h3>
               <p>Tüm kartlardan kurtul!</p>
               <span class="game-meta">2-12 oyuncu · 5 dk</span>
+            </button>
+
+            <button class="game-card" data-game="sih">
+              <div class="game-icon">🏙️</div>
+              <h3>Şehir-İsim-Hayvan</h3>
+              <p>Harfle başlayan kategori doldur!</p>
+              <span class="game-meta">2-12 oyuncu · 5 dk</span>
+            </button>
+
+            <button class="game-card" data-game="emoji">
+              <div class="game-icon">🎭</div>
+              <h3>Emoji Tahmin</h3>
+              <p>Emoji'lerden ne anlatılıyor bul!</p>
+              <span class="game-meta">2-12 oyuncu · 4 dk</span>
+            </button>
+
+            <button class="game-card" data-game="codenames">
+              <div class="game-icon">🕵️</div>
+              <h3>Codenames TR</h3>
+              <p>Casus şefi ipucu verir, ajanlar bulur!</p>
+              <span class="game-meta">4-12 oyuncu · 10 dk</span>
+            </button>
+
+            <button class="game-card" data-game="syarisi">
+              <div class="game-icon">🏙️</div>
+              <h3>Şehir Yarışı</h3>
+              <p>Türkiye şehirlerini topla, rakipleri batır!</p>
+              <span class="game-meta">2-8 oyuncu · 30+ dk</span>
             </button>
           </div>
           <p class="hint" id="host-hint">Sadece oda kurucusu oyun başlatabilir.</p>
@@ -700,6 +731,308 @@
       </div>
     </section>
 
+    <!-- ========== EKRAN: ŞEHİR-İSİM-HAYVAN ========== -->
+    <section id="screen-sih" class="screen">
+      <div class="game-header">
+        <h2>🏙️ Şehir-İsim-Hayvan</h2>
+        <button class="btn btn-ghost btn-sm" id="sih-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="sih-top">
+        <div class="sih-info">
+          <span class="label">TUR:</span>
+          <span id="sih-round">1/5</span>
+        </div>
+        <div class="timer-circle small">
+          <span id="sih-timer">60</span>
+        </div>
+        <div class="sih-letter-display">
+          <span class="label">HARF:</span>
+          <span class="big-letter" id="sih-letter">?</span>
+        </div>
+      </div>
+
+      <!-- Harf seçim (host modunda) -->
+      <div class="sih-letter-pick" id="sih-letter-pick" style="display:none">
+        <p class="sih-letter-pick-msg">Host bir harf seçsin:</p>
+        <div class="sih-letter-grid" id="sih-letter-grid"></div>
+      </div>
+
+      <!-- Yazma alanı -->
+      <div class="sih-writing" id="sih-writing" style="display:none">
+        <div class="sih-cats" id="sih-cats"></div>
+        <button class="btn btn-primary" id="sih-submit-btn">✓ Cevapları Gönder</button>
+        <p class="sih-submitted-msg" id="sih-submitted-msg" style="display:none">⏳ Cevapların kilitlendi, diğerleri bekleniyor...</p>
+      </div>
+
+      <!-- Sonuç tablosu (tur sonu) -->
+      <div class="sih-results" id="sih-results" style="display:none">
+        <h3>📊 Tur Sonucu — Harf: <strong id="sih-results-letter">?</strong></h3>
+        <div class="sih-results-table" id="sih-results-table"></div>
+      </div>
+
+      <div class="scoreboard" id="sih-scoreboard"></div>
+
+      <div class="game-over" id="sih-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="sih-winner">-</strong></p>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="sih-back-lobby">Lobiye Dön</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN: CODENAMES ========== -->
+    <section id="screen-codenames" class="screen">
+      <div class="game-header">
+        <h2>🕵️ Codenames TR</h2>
+        <button class="btn btn-ghost btn-sm" id="cn-exit">Lobiye Dön</button>
+      </div>
+
+      <!-- Setup ekranı: takım + rol seçimi -->
+      <div class="cn-setup" id="cn-setup" style="display:none">
+        <p class="cn-setup-msg">Takım seç ve casus şefi seçimini yap. Her takımda en az 2 oyuncu + 1 casus şefi gerekiyor.</p>
+        <div class="cn-team-cols">
+          <div class="cn-team-col red">
+            <h3>🔴 Kırmızı Takım</h3>
+            <ul class="cn-team-list" id="cn-red-list"></ul>
+            <button class="btn btn-secondary btn-sm cn-join-btn" data-team="red">Katıl</button>
+            <button class="btn btn-ghost btn-sm cn-role-btn" data-role="spymaster">🕵️ Casus Şefi Ol</button>
+          </div>
+          <div class="cn-team-col blue">
+            <h3>🔵 Mavi Takım</h3>
+            <ul class="cn-team-list" id="cn-blue-list"></ul>
+            <button class="btn btn-secondary btn-sm cn-join-btn" data-team="blue">Katıl</button>
+            <button class="btn btn-ghost btn-sm cn-role-btn" data-role="spymaster">🕵️ Casus Şefi Ol</button>
+          </div>
+        </div>
+        <div class="cn-unassigned-wrap">
+          <h4>Henüz takım seçmeyenler:</h4>
+          <ul class="cn-team-list" id="cn-unassigned-list"></ul>
+        </div>
+        <p class="cn-host-hint" id="cn-host-hint"></p>
+        <button class="btn btn-primary host-only" id="cn-start-game">▶ Oyunu Başlat</button>
+      </div>
+
+      <!-- Oyun aktif -->
+      <div class="cn-play" id="cn-play" style="display:none">
+        <div class="cn-status-bar">
+          <div class="cn-team-counter red">🔴 <span id="cn-red-remaining">9</span></div>
+          <div class="cn-turn-indicator" id="cn-turn-indicator">🔴 Kırmızı'nın sırası</div>
+          <div class="cn-team-counter blue">🔵 <span id="cn-blue-remaining">8</span></div>
+        </div>
+
+        <!-- İpucu (aktif takım casus şefi için input, diğerleri için sadece görüntü) -->
+        <div class="cn-clue-bar" id="cn-clue-bar">
+          <!-- Dinamik: ya clue display ya input -->
+        </div>
+
+        <!-- 5x5 board -->
+        <div class="cn-board" id="cn-board"></div>
+
+        <!-- Log -->
+        <div class="cn-log" id="cn-log"></div>
+      </div>
+
+      <div class="game-over" id="cn-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2 id="cn-gameover-title">🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="cn-winner">-</strong></p>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="cn-back-lobby">Lobiye Dön</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN: ŞEHİR YARIŞI ========== -->
+    <section id="screen-syarisi" class="screen">
+      <div class="game-header">
+        <h2>🏙️ Şehir Yarışı</h2>
+        <button class="btn btn-ghost btn-sm" id="sy-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="sy-layout">
+        <!-- Oyuncu paneli (sol) -->
+        <aside class="sy-players-panel" id="sy-players-panel"></aside>
+
+        <!-- Board + center -->
+        <div class="sy-board-wrap">
+          <div class="sy-board" id="sy-board"></div>
+        </div>
+
+        <!-- Action panel (sağ) -->
+        <aside class="sy-action-panel">
+          <div class="sy-dice-area">
+            <div class="sy-dice" id="sy-die-1">?</div>
+            <div class="sy-dice" id="sy-die-2">?</div>
+          </div>
+          <div class="sy-turn-info" id="sy-turn-info">Sıra bekleniyor...</div>
+          <div class="sy-action-buttons" id="sy-action-buttons">
+            <!-- Dinamik butonlar -->
+          </div>
+          <div class="sy-log-wrap">
+            <h4>📜 Olay Akışı</h4>
+            <div class="sy-log" id="sy-log"></div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Modallar -->
+      <div class="sy-modal" id="sy-buy-modal" style="display:none">
+        <div class="sy-modal-content">
+          <h3 id="sy-buy-title">Mülk Satın Al</h3>
+          <div class="sy-card-preview" id="sy-buy-card"></div>
+          <div class="sy-modal-actions">
+            <button class="btn btn-primary" id="sy-buy-confirm">✅ Satın Al</button>
+            <button class="btn btn-secondary" id="sy-buy-decline">❌ Reddet</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sy-modal" id="sy-card-modal" style="display:none">
+        <div class="sy-modal-content">
+          <h3 id="sy-card-title">🎴 Kart</h3>
+          <p class="sy-card-text" id="sy-card-text"></p>
+          <div class="sy-modal-actions">
+            <button class="btn btn-primary" id="sy-card-ok">Tamam</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sy-modal" id="sy-auction-modal" style="display:none">
+        <div class="sy-modal-content">
+          <h3>🔨 Açık Artırma</h3>
+          <div class="sy-card-preview" id="sy-auction-card"></div>
+          <p>Mevcut teklif: <strong id="sy-auction-bid">0₺</strong> (<span id="sy-auction-bidder">-</span>)</p>
+          <div class="sy-modal-row">
+            <input type="number" id="sy-auction-input" min="1" step="10" placeholder="Teklif" />
+            <button class="btn btn-primary" id="sy-auction-bid-btn">Teklif Ver</button>
+            <button class="btn btn-secondary" id="sy-auction-pass-btn">Pas</button>
+          </div>
+          <p class="sy-auction-status" id="sy-auction-status"></p>
+        </div>
+      </div>
+
+      <div class="sy-modal" id="sy-trade-modal" style="display:none">
+        <div class="sy-modal-content sy-modal-wide">
+          <h3>🤝 Takas Teklifi</h3>
+          <div class="sy-trade-cols">
+            <div class="sy-trade-col">
+              <h4>Sen veriyorsun</h4>
+              <div class="sy-trade-row">
+                <label>Para (₺):</label>
+                <input type="number" id="sy-trade-give-money" min="0" value="0" />
+              </div>
+              <div class="sy-trade-row">
+                <label>Hapis kartı:</label>
+                <input type="number" id="sy-trade-give-cards" min="0" value="0" />
+              </div>
+              <div class="sy-trade-props" id="sy-trade-give-props"></div>
+            </div>
+            <div class="sy-trade-col">
+              <h4>Karşılığında</h4>
+              <div class="sy-trade-row">
+                <label>Hedef oyuncu:</label>
+                <select id="sy-trade-target"></select>
+              </div>
+              <div class="sy-trade-row">
+                <label>Para (₺):</label>
+                <input type="number" id="sy-trade-want-money" min="0" value="0" />
+              </div>
+              <div class="sy-trade-row">
+                <label>Hapis kartı:</label>
+                <input type="number" id="sy-trade-want-cards" min="0" value="0" />
+              </div>
+              <div class="sy-trade-props" id="sy-trade-want-props"></div>
+            </div>
+          </div>
+          <div class="sy-modal-actions">
+            <button class="btn btn-primary" id="sy-trade-send">Teklif Gönder</button>
+            <button class="btn btn-secondary" id="sy-trade-cancel">İptal</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sy-modal" id="sy-trade-response-modal" style="display:none">
+        <div class="sy-modal-content sy-modal-wide">
+          <h3>🤝 Takas Teklifi Geldi</h3>
+          <p id="sy-trade-from">-</p>
+          <div class="sy-trade-summary" id="sy-trade-summary"></div>
+          <div class="sy-modal-actions">
+            <button class="btn btn-primary" id="sy-trade-accept">✅ Kabul Et</button>
+            <button class="btn btn-secondary" id="sy-trade-reject">❌ Reddet</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sy-modal" id="sy-manage-modal" style="display:none">
+        <div class="sy-modal-content sy-modal-wide">
+          <h3>🏘️ Mülk Yönetimi</h3>
+          <div class="sy-manage-list" id="sy-manage-list"></div>
+          <div class="sy-modal-actions">
+            <button class="btn btn-secondary" id="sy-manage-close">Kapat</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="game-over" id="sy-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Şehir Yarışı Bitti!</h2>
+          <p>Kazanan: <strong id="sy-winner">-</strong></p>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="sy-back-lobby">Lobiye Dön</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN: EMOJİ TAHMİN ========== -->
+    <section id="screen-emoji" class="screen">
+      <div class="game-header">
+        <h2>🎭 Emoji Tahmin</h2>
+        <button class="btn btn-ghost btn-sm" id="emoji-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="emoji-top">
+        <span class="emoji-q-num" id="emoji-q-num">Soru 1/10</span>
+        <span class="emoji-cat" id="emoji-cat">-</span>
+        <div class="timer-circle small">
+          <span id="emoji-timer">30</span>
+        </div>
+      </div>
+
+      <div class="emoji-display-card">
+        <div class="emoji-display" id="emoji-display">🎭</div>
+        <p class="emoji-reveal-text" id="emoji-reveal-text" style="display:none"></p>
+      </div>
+
+      <div class="emoji-guess-area" id="emoji-guess-area">
+        <input type="text" id="emoji-guess-input" placeholder="Tahminini yaz..." maxlength="50" autocomplete="off"/>
+        <button class="btn btn-primary" id="emoji-guess-btn">Gönder</button>
+      </div>
+
+      <div class="emoji-chat" id="emoji-chat"></div>
+
+      <div class="scoreboard" id="emoji-scoreboard"></div>
+
+      <div class="game-over" id="emoji-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Oyun Bitti!</h2>
+          <p>Kazanan: <strong id="emoji-winner">-</strong></p>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="emoji-back-lobby">Lobiye Dön</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </div>
 
   </div>
@@ -720,7 +1053,11 @@
         <button class="settings-tab" data-tab="trivia">🎯 Trivia</button>
         <button class="settings-tab" data-tab="vampir">🧛 Vampir</button>
         <button class="settings-tab" data-tab="yilan">🐍 Yılan</button>
+        <button class="settings-tab" data-tab="sih">🏙️ S-İ-H</button>
+        <button class="settings-tab" data-tab="emoji">🎭 Emoji</button>
+        <button class="settings-tab" data-tab="codenames">🕵️ Codenames</button>
         <button class="settings-tab" data-tab="uno">🃏 Uno</button>
+        <button class="settings-tab" data-tab="syarisi">🏙️ Ş.Yarışı</button>
       </div>
 
       <div class="settings-body">
@@ -900,6 +1237,138 @@
             <input type="range" id="set-uno-initialHand" min="5" max="10" value="7" data-game="uno" data-key="initialHand"/>
           </div>
         </div>
+
+        <!-- ŞEHİR-İSİM-HAYVAN -->
+        <div class="settings-pane" data-pane="sih">
+          <div class="setting-row">
+            <label>Tur sayısı: <span class="setting-value" id="set-sih-roundCount-val">5</span></label>
+            <input type="range" id="set-sih-roundCount" min="1" max="20" value="5" data-game="sih" data-key="roundCount"/>
+          </div>
+          <div class="setting-row">
+            <label>Tur süresi: <span class="setting-value" id="set-sih-roundTime-val">60</span> saniye</label>
+            <input type="range" id="set-sih-roundTime" min="20" max="180" step="10" value="60" data-game="sih" data-key="roundTime"/>
+          </div>
+          <div class="setting-row">
+            <label>Harf seçimi</label>
+            <select id="set-sih-letterMode" data-game="sih" data-key="letterMode" class="settings-select">
+              <option value="random">🎲 Rastgele (otomatik)</option>
+              <option value="host">👑 Host seçer</option>
+            </select>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-sih-autoValidate" data-game="sih" data-key="autoValidate" checked/>
+              Otomatik doğrulama (yanlış cevap = 0 puan)
+            </label>
+            <span class="setting-info">Kapatırsan sözlük kontrolü yapılmaz, sadece harf eşleşmesi gerek</span>
+          </div>
+          <div class="setting-row">
+            <label>Aktif kategoriler</label>
+            <div class="sih-cat-grid" id="set-sih-categories">
+              <label><input type="checkbox" value="hayvan" checked/> 🦁 Hayvan</label>
+              <label><input type="checkbox" value="isim" checked/> 👤 İsim</label>
+              <label><input type="checkbox" value="sehir" checked/> 🏙️ Şehir</label>
+              <label><input type="checkbox" value="ulke"/> 🌍 Ülke</label>
+              <label><input type="checkbox" value="yemek"/> 🍕 Yemek</label>
+              <label><input type="checkbox" value="bitki"/> 🌿 Bitki</label>
+              <label><input type="checkbox" value="esya"/> 🪑 Eşya</label>
+              <label><input type="checkbox" value="renk"/> 🎨 Renk</label>
+              <label><input type="checkbox" value="marka"/> 🚗 Marka</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- EMOJİ TAHMİN -->
+        <div class="settings-pane" data-pane="emoji">
+          <div class="setting-row">
+            <label>Soru sayısı: <span class="setting-value" id="set-emoji-totalQuestions-val">10</span></label>
+            <input type="range" id="set-emoji-totalQuestions" min="5" max="30" value="10" data-game="emoji" data-key="totalQuestions"/>
+          </div>
+          <div class="setting-row">
+            <label>Soru süresi: <span class="setting-value" id="set-emoji-questionTime-val">30</span> saniye</label>
+            <input type="range" id="set-emoji-questionTime" min="10" max="60" step="5" value="30" data-game="emoji" data-key="questionTime"/>
+          </div>
+          <div class="setting-row">
+            <label>Kategori</label>
+            <select id="set-emoji-category" data-game="emoji" data-key="category" class="settings-select">
+              <option value="karisik">🎨 Karışık (varsayılan)</option>
+              <option value="film">🎬 Film</option>
+              <option value="dizi">📺 Dizi</option>
+              <option value="şarkı">🎵 Şarkı</option>
+              <option value="marka">🏢 Marka</option>
+              <option value="yemek">🍕 Yemek</option>
+              <option value="yer">🌍 Yer/Şehir</option>
+              <option value="deyim">💬 Deyim/Atasözü</option>
+              <option value="kavram">💡 Kavram</option>
+            </select>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-emoji-acceptClose" data-game="emoji" data-key="acceptClose" checked/>
+              Yakın tahmin kabul (1 harf hata tolerans)
+            </label>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-emoji-firstBonus" data-game="emoji" data-key="firstBonus" checked/>
+              İlk bilen bonusu (+5 puan)
+            </label>
+          </div>
+        </div>
+
+        <!-- CODENAMES -->
+        <div class="settings-pane" data-pane="codenames">
+          <div class="setting-row">
+            <label>İlk hamleyi yapacak takım</label>
+            <select id="set-codenames-firstTeam" data-game="codenames" data-key="firstTeam" class="settings-select">
+              <option value="random">🎲 Rastgele</option>
+              <option value="red">🔴 Kırmızı</option>
+              <option value="blue">🔵 Mavi</option>
+            </select>
+            <span class="setting-info">İlk hamleyi yapan takım 9 kart, diğeri 8 kart açacak</span>
+          </div>
+          <div class="setting-row">
+            <p style="color:var(--color-text-light); font-style: italic; font-size: 0.9rem; line-height: 1.5">
+              🎮 <strong>Oyun başlayınca</strong> herkesin takım + rol seçeceği setup ekranı çıkacak.
+              Her takımda min 2 oyuncu + 1 casus şefi gerek.
+            </p>
+          </div>
+        </div>
+
+        <!-- ŞEHİR YARIŞI -->
+        <div class="settings-pane" data-pane="syarisi">
+          <div class="setting-row">
+            <label>Başlangıç parası: <span class="setting-value" id="set-syarisi-startingMoney-val">1500</span>₺</label>
+            <input type="range" id="set-syarisi-startingMoney" min="500" max="3000" step="100" value="1500" data-game="syarisi" data-key="startingMoney"/>
+            <span class="setting-info">Az parayla zorlu, çok parayla rahat oyun</span>
+          </div>
+          <div class="setting-row">
+            <label>Başlangıç'tan geçince: <span class="setting-value" id="set-syarisi-goBonus-val">200</span>₺</label>
+            <input type="range" id="set-syarisi-goBonus" min="100" max="400" step="50" value="200" data-game="syarisi" data-key="goBonus"/>
+          </div>
+          <div class="setting-row">
+            <label>Hapis çıkış cezası: <span class="setting-value" id="set-syarisi-jailFine-val">50</span>₺</label>
+            <input type="range" id="set-syarisi-jailFine" min="0" max="200" step="10" value="50" data-game="syarisi" data-key="jailFine"/>
+          </div>
+          <div class="setting-row">
+            <label>İpotek geri alma faizi: <span class="setting-value" id="set-syarisi-mortgageInterest-val">10</span>%</label>
+            <input type="range" id="set-syarisi-mortgageInterest" min="0" max="25" step="5" value="10" data-game="syarisi" data-key="mortgageInterest"/>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-syarisi-enableAuction" data-game="syarisi" data-key="enableAuction" checked/>
+              Açık artırma aç
+            </label>
+            <span class="setting-info">Mülk satın alınmazsa açık artırmaya çıksın</span>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-syarisi-parkingPot" data-game="syarisi" data-key="parkingPot"/>
+              Ücretsiz Park kasası
+            </label>
+            <span class="setting-info">Vergi/cezalar Ücretsiz Park'ta birikir; oraya gelene verilir</span>
+          </div>
+        </div>
       </div>
 
       <p class="settings-host-warning" id="settings-host-warning" style="display:none">
@@ -975,6 +1444,18 @@
           <details>
             <summary>⚓ Amiral Battı</summary>
             <p>Önce gemilerini yerleştir (4lü, 3lü×2, 2li×2). R ile döndür. Mobilde "Yerleştir" butonu. Sırayla rakibin tahtasına atış yap. Tüm gemilerini batıran kazanır.</p>
+          </details>
+          <details>
+            <summary>🏙️ Şehir-İsim-Hayvan</summary>
+            <p>Sistem (veya host) bir harf belirler. Aktif kategorilerde o harfle başlayan kelimeler yazarsın (Hayvan, İsim, Şehir vb.). Süre dolunca puanlar: Tek yazan = 10p, paylaşılan = 5p, yanlış/boş = 0p, tüm kategoriler doluysa +15 bonus. Otomatik sözlük doğrulaması ile yanlış cevaplar 0 alır.</p>
+          </details>
+          <details>
+            <summary>🎭 Emoji Tahmin</summary>
+            <p>Sistem emoji dizisi gösterir (örn. 🦁👑 = "Aslan Kral"). Herkes aynı anda tahmin yazar. İlk doğru bilen +5 ekstra bonus alır. Zaman dolmadan bilen daha çok puan kazanır. 1 harf farklı tahminler kabul edilebilir (toggle).</p>
+          </details>
+          <details>
+            <summary>🕵️ Codenames TR</summary>
+            <p>2 takım (Kırmızı vs Mavi), her takımda 1 Casus Şefi + diğer ajanlar. 25 kelimelik tahtada her takımın kendi kartları var. Casus Şefi tek bir ipucu kelime + sayı verir, ajanlar kart açar. <strong>Suikastçi kartını açan takım anında kaybeder!</strong> Kendi kartlarını ilk biten kazanır. Lobide önce takım/rol seç, sonra host başlatır.</p>
           </details>
           <details>
             <summary>🃏 Uno Benzeri</summary>
