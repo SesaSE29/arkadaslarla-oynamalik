@@ -973,7 +973,9 @@ const GAME_INFO = {
   'sih':            { tab: 'sih',    icon: '🏙️', name: 'Şehir-İsim-Hayvan' },
   'emoji':          { tab: 'emoji',  icon: '🎭', name: 'Emoji Tahmin' },
   'codenames':      { tab: 'codenames', icon: '🕵️', name: 'Codenames TR' },
-  'syarisi':        { tab: 'syarisi', icon: '🏙️', name: 'Şehir Yarışı' }
+  'syarisi':        { tab: 'syarisi', icon: '🏙️', name: 'Şehir Yarışı' },
+  'kizma':          { tab: 'kizma', icon: '🎲', name: 'Kızma Birader' },
+  'pisti':          { tab: 'pisti', icon: '🎴', name: 'Pişti' }
 };
 
 function closeSettings() {
@@ -3904,6 +3906,12 @@ socket.on('room:update', (data) => {
   } else if (data.game === 'syarisi') {
     showScreen('screen-syarisi');
     renderSY();
+  } else if (data.game === 'kizma') {
+    showScreen('screen-kizma');
+    renderKZ();
+  } else if (data.game === 'pisti') {
+    showScreen('screen-pisti');
+    renderPI();
   }
 });
 
@@ -4294,6 +4302,7 @@ const SY_COLOR_LABELS = {
   brown: 'KAHVE', lblue: 'AÇIK MAVİ', pink: 'PEMBE', orange: 'TURUNCU',
   red: 'KIRMIZI', yellow: 'SARI', green: 'YEŞİL', dblue: 'KOYU MAVİ'
 };
+const SY_TOKEN_CHARS = ['🦁', '✈️', '👟', '🚗', '🎩', '🚢', '🐶', '🐱', '🦄', '🚲', '🎲', '👑'];
 
 // Exit handlers
 document.getElementById('sy-exit')?.addEventListener('click', exitGame);
@@ -4392,6 +4401,7 @@ function renderSY() {
   _syHandleModals(gs);
 }
 
+let _syLastMoneyByPlayer = {};
 function _syRenderPlayers(gs) {
   const panel = document.getElementById('sy-players-panel');
   panel.innerHTML = '';
@@ -4403,9 +4413,16 @@ function _syRenderPlayers(gs) {
     let propCount = gs.squares.filter(s => s.ownerId === p.id).length;
     let jailHtml = p.jailTurns > 0 ? `<span class="sy-player-jail">🔒 ${p.jailTurns}/3</span>` : '';
     let cardsHtml = p.getOutCards > 0 ? ` 🎫×${p.getOutCards}` : '';
+    // Para flash
+    let flashClass = '';
+    const prevMoney = _syLastMoneyByPlayer[p.id];
+    if (prevMoney !== undefined && prevMoney !== p.money) {
+      flashClass = p.money > prevMoney ? 'flash-pos' : 'flash-neg';
+    }
+    _syLastMoneyByPlayer[p.id] = p.money;
     card.innerHTML = `
-      <div class="sy-player-name"><span class="sy-player-token"></span>${escapeHtml(p.name)}${jailHtml}${p.id === state.you?.id ? ' (SEN)' : ''}</div>
-      <div class="sy-player-money">${p.money}₺</div>
+      <div class="sy-player-name"><span class="sy-player-token">${p.token || '?'}</span>${escapeHtml(p.name)}${jailHtml}${p.id === state.you?.id ? ' (SEN)' : ''}</div>
+      <div class="sy-player-money ${flashClass}">${p.money}₺</div>
       <div class="sy-player-status">🏠 ${propCount} mülk${cardsHtml}${p.bankrupt ? ' · 💀 İFLAS' : ''}</div>
     `;
     panel.appendChild(card);
@@ -4413,11 +4430,9 @@ function _syRenderPlayers(gs) {
 }
 
 function _syRenderBoardState(gs) {
-  // Clear all token/house containers
-  document.querySelectorAll('[data-tokens]').forEach(el => el.innerHTML = '');
+  // Sadece house container'ları temizle (token'ları DEĞİL — animasyon için kalıcı)
   document.querySelectorAll('[data-houses]').forEach(el => el.innerHTML = '');
 
-  // Mortgage + ownership state
   gs.squares.forEach((sq, idx) => {
     const cell = document.getElementById(`sy-sq-${idx}`);
     if (!cell) return;
@@ -4429,29 +4444,101 @@ function _syRenderBoardState(gs) {
     } else {
       cell.style.removeProperty('--owner-color');
     }
-    // Houses/hotel
     const hContainer = cell.querySelector('[data-houses]');
     if (hContainer) {
-      if (sq.hotel) {
-        hContainer.innerHTML = '<div class="sy-hotel-dot"></div>';
-      } else if (sq.houses > 0) {
-        hContainer.innerHTML = Array.from({ length: sq.houses }, () => '<div class="sy-house-dot"></div>').join('');
-      }
+      if (sq.hotel) hContainer.innerHTML = '<div class="sy-hotel-dot"></div>';
+      else if (sq.houses > 0) hContainer.innerHTML = Array.from({ length: sq.houses }, () => '<div class="sy-house-dot"></div>').join('');
     }
   });
 
-  // Tokens (player positions)
-  gs.players.forEach(p => {
-    if (p.bankrupt) return;
-    const cell = document.getElementById(`sy-sq-${p.position}`);
-    if (!cell) return;
-    const tContainer = cell.querySelector('[data-tokens]') || cell;
-    const tok = document.createElement('div');
-    tok.className = 'sy-token';
-    tok.style.setProperty('--token-color', p.color);
-    tok.title = p.name;
-    tContainer.appendChild(tok);
+  _syRenderTokens(gs);
+}
+
+// --- Token rendering + walking animation ---
+let _syPrevPositions = {};
+let _syAnimatingFor = new Set();
+
+function _syRenderTokens(gs) {
+  // Stale token'ları (oyuncu çıkmış) sil
+  document.querySelectorAll('[data-token-player]').forEach(el => {
+    const pid = el.dataset.tokenPlayer;
+    if (!gs.players.some(p => p.id === pid)) {
+      el.remove();
+      delete _syPrevPositions[pid];
+      _syAnimatingFor.delete(pid);
+    }
   });
+
+  const walkOn = state.settings?.syarisi?.walkAnimation !== false;
+
+  gs.players.forEach(p => {
+    let token = document.querySelector(`[data-token-player="${p.id}"]`);
+    if (!token) {
+      token = document.createElement('div');
+      token.className = 'sy-token';
+      token.dataset.tokenPlayer = p.id;
+    }
+    token.style.setProperty('--token-color', p.color);
+    token.textContent = p.token || '?';
+    token.title = p.name;
+    token.style.opacity = p.bankrupt ? '0.3' : '';
+
+    if (_syAnimatingFor.has(p.id)) return; // animasyon devam ediyor, bitince hedefe varır
+
+    const newPos = p.position;
+    const prevPos = _syPrevPositions[p.id];
+    if (prevPos === undefined || prevPos === newPos || !walkOn) {
+      _syPlaceToken(token, newPos);
+      _syPrevPositions[p.id] = newPos;
+    } else {
+      _syAnimateWalk(p.id, token, prevPos, newPos);
+    }
+  });
+}
+
+function _syPlaceToken(token, pos) {
+  const cell = document.getElementById(`sy-sq-${pos}`);
+  if (!cell) return;
+  const tokens = cell.querySelector('[data-tokens]');
+  if (tokens) tokens.appendChild(token);
+}
+
+function _syAnimateWalk(playerId, token, fromPos, toPos) {
+  _syAnimatingFor.add(playerId);
+  // İleri yönde path (Go'dan geçtiyse wraparound)
+  const path = [];
+  let pos = fromPos;
+  let safety = 0;
+  while (pos !== toPos && safety < 42) {
+    pos = (pos + 1) % 40;
+    path.push(pos);
+    safety++;
+  }
+  if (path.length === 0) {
+    _syAnimatingFor.delete(playerId);
+    return;
+  }
+  let i = 0;
+  const tick = () => {
+    if (i >= path.length) {
+      _syAnimatingFor.delete(playerId);
+      _syPrevPositions[playerId] = toPos;
+      // Sunucu pozisyonu animasyon sırasında değiştiyse tekrar başlat
+      const gs = state.gameState;
+      const p = gs?.players?.find(x => x.id === playerId);
+      if (p && p.position !== toPos) {
+        _syAnimateWalk(playerId, token, toPos, p.position);
+      }
+      return;
+    }
+    const step = path[i++];
+    _syPlaceToken(token, step);
+    token.classList.remove('sy-hop');
+    void token.offsetWidth; // animasyonu sıfırla
+    token.classList.add('sy-hop');
+    setTimeout(tick, 140);
+  };
+  tick();
 }
 
 function _syRenderTurnInfo(gs) {
@@ -4531,21 +4618,68 @@ function _syRenderTurnInfo(gs) {
     }
   }
 
-  // Her zaman görünür: yönet + takas (kendi sıranızda olmasa da kullanılabilir aslında)
+  // Her zaman görünür: karakter + yönet + takas (ayarda açıksa)
   if (me && !me.bankrupt) {
+    const tokenBtn = document.createElement('button');
+    tokenBtn.className = 'btn btn-ghost';
+    tokenBtn.textContent = `${me.token || '🎲'} Karakterim`;
+    tokenBtn.addEventListener('click', () => _syOpenTokenPicker(gs));
+    btns.appendChild(tokenBtn);
+
     const manageBtn = document.createElement('button');
     manageBtn.className = 'btn btn-ghost';
     manageBtn.textContent = '🏘️ Mülklerimi Yönet';
     manageBtn.addEventListener('click', () => _syOpenManageModal(gs));
     btns.appendChild(manageBtn);
 
-    const tradeBtn = document.createElement('button');
-    tradeBtn.className = 'btn btn-ghost';
-    tradeBtn.textContent = '🤝 Takas Teklif Et';
-    tradeBtn.addEventListener('click', () => _syOpenTradeModal(gs));
-    btns.appendChild(tradeBtn);
+    const tradeOn = state.settings?.syarisi?.enableTrade !== false;
+    if (tradeOn) {
+      const tradeBtn = document.createElement('button');
+      tradeBtn.className = 'btn btn-ghost';
+      tradeBtn.textContent = '🤝 Takas Teklif Et';
+      tradeBtn.addEventListener('click', () => _syOpenTradeModal(gs));
+      btns.appendChild(tradeBtn);
+    }
   }
 }
+
+// --- Token picker modal ---
+function _syOpenTokenPicker(gs) {
+  const me = gs.players.find(p => p.id === state.you?.id);
+  const grid = document.getElementById('sy-token-grid');
+  grid.innerHTML = '';
+  const takenMap = {};
+  gs.players.forEach(p => { if (p.token) takenMap[p.token] = p.id; });
+
+  SY_TOKEN_CHARS.forEach(tok => {
+    const cell = document.createElement('div');
+    cell.className = 'sy-token-cell';
+    cell.textContent = tok;
+    if (takenMap[tok] && takenMap[tok] !== me?.id) cell.classList.add('taken');
+    if (takenMap[tok] === me?.id) cell.classList.add('mine', 'selected');
+    cell.addEventListener('click', () => {
+      if (cell.classList.contains('taken')) return;
+      socket.emit('sy:setToken', { token: tok });
+      try { localStorage.setItem('syToken', tok); } catch {}
+      // Yeniden açma için kısa bekleyiş
+      setTimeout(() => _syOpenTokenPicker(state.gameState), 200);
+    });
+    grid.appendChild(cell);
+  });
+  document.getElementById('sy-token-modal').style.display = 'flex';
+}
+document.getElementById('sy-token-close')?.addEventListener('click', () => {
+  document.getElementById('sy-token-modal').style.display = 'none';
+});
+
+// Oda kurulduğunda / katıldığında localStorage'dan token tercihini bildir
+function _sySendStoredToken() {
+  try {
+    const t = localStorage.getItem('syToken');
+    if (t && SY_TOKEN_CHARS.includes(t)) socket.emit('sy:setToken', { token: t });
+  } catch {}
+}
+socket.on('room:joined', () => { _sySendStoredToken(); });
 
 function _syHandleModals(gs) {
   const me = gs.players.find(p => p.id === state.you?.id);
@@ -4854,3 +4988,618 @@ document.getElementById('sy-trade-reject')?.addEventListener('click', () => {
 // Kart modal — pendingCard varsa otomatik göster, ok'lediği zaman serv tarafa relaylanmıyor (server otomatik uyguladı zaten); sadece ok kapatır.
 // Aslında kart efektleri broadcast'te direk uygulanmış olur. UI sadece bilgi vermek için kullanılır.
 // Bu modal artık opsiyonel — log'da görünür. Şimdilik kullanmıyoruz.
+
+// ============================================================
+// KIZMA BİRADER ARAYÜZÜ
+// ============================================================
+// 40 track pozisyonu → 11×11 grid (row, col) eşlemesi
+function kzTrackPos(idx) {
+  if (idx >= 0 && idx <= 10)  return { r: 1, c: idx + 1 };           // 0=(1,1) ... 10=(1,11)
+  if (idx >= 11 && idx <= 20) return { r: idx - 9, c: 11 };          // 11=(2,11) ... 20=(11,11)
+  if (idx >= 21 && idx <= 30) return { r: 11, c: 31 - idx };         // 21=(11,10) ... 30=(11,1)
+  if (idx >= 31 && idx <= 39) return { r: 41 - idx, c: 1 };          // 31=(10,1) ... 39=(2,1)
+  return { r: 1, c: 1 };
+}
+// Slot başlangıçları (server ile aynı): 0=TL kırmızı, 1=TR mavi, 2=BR yeşil, 3=BL sarı
+const KZ_COLORS = ['red', 'blue', 'green', 'yellow'];
+const KZ_LABELS = ['Kırmızı', 'Mavi', 'Yeşil', 'Sarı'];
+const KZ_HEX = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f'];
+
+// Finiş hatları (4 hücre, edge'den merkeze) — her slot için
+const KZ_FINISH = [
+  // slot 0 (kırmızı, TL): col 2, rows 2-5
+  [{r:2,c:2},{r:3,c:2},{r:4,c:2},{r:5,c:2}],
+  // slot 1 (mavi, TR): col 10, rows 2-5
+  [{r:2,c:10},{r:3,c:10},{r:4,c:10},{r:5,c:10}],
+  // slot 2 (yeşil, BR): col 10, rows 10-7
+  [{r:10,c:10},{r:9,c:10},{r:8,c:10},{r:7,c:10}],
+  // slot 3 (sarı, BL): col 2, rows 10-7
+  [{r:10,c:2},{r:9,c:2},{r:8,c:2},{r:7,c:2}]
+];
+
+// Ev (home) hücreleri — her oyuncuya 4 slot
+const KZ_HOME = [
+  [{r:3,c:3},{r:3,c:4},{r:4,c:3},{r:4,c:4}],   // slot 0 TL
+  [{r:3,c:8},{r:3,c:9},{r:4,c:8},{r:4,c:9}],   // slot 1 TR
+  [{r:8,c:8},{r:8,c:9},{r:9,c:8},{r:9,c:9}],   // slot 2 BR
+  [{r:8,c:3},{r:8,c:4},{r:9,c:3},{r:9,c:4}]    // slot 3 BL
+];
+
+document.getElementById('kz-exit')?.addEventListener('click', exitGame);
+document.getElementById('kz-back-lobby')?.addEventListener('click', exitGame);
+
+let _kzBoardBuilt = false;
+function _kzBuildBoard() {
+  const board = document.getElementById('kz-board');
+  board.innerHTML = '';
+
+  // Merkez logo
+  const logo = document.createElement('div');
+  logo.className = 'kz-center-logo';
+  logo.innerHTML = `KIZMA<br/>BİRADER<small>🎲 6 atınca çık!</small>`;
+  board.appendChild(logo);
+
+  // Track hücreleri
+  for (let i = 0; i < 40; i++) {
+    const pos = kzTrackPos(i);
+    const cell = document.createElement('div');
+    cell.className = 'kz-cell kz-cell-track';
+    cell.style.gridRow = pos.r;
+    cell.style.gridColumn = pos.c;
+    cell.id = `kz-track-${i}`;
+    // Start kareleri
+    if (i === 0)  cell.classList.add('kz-start-red');
+    if (i === 10) cell.classList.add('kz-start-blue');
+    if (i === 20) cell.classList.add('kz-start-green');
+    if (i === 30) cell.classList.add('kz-start-yellow');
+    cell.innerHTML = `<div class="kz-pawns" data-track="${i}"></div>`;
+    board.appendChild(cell);
+  }
+
+  // Finiş hücreleri (her slot için 4)
+  for (let s = 0; s < 4; s++) {
+    KZ_FINISH[s].forEach((pos, fi) => {
+      const cell = document.createElement('div');
+      cell.className = `kz-cell kz-cell-finish kz-c-${KZ_COLORS[s]}`;
+      cell.style.gridRow = pos.r;
+      cell.style.gridColumn = pos.c;
+      cell.id = `kz-finish-${s}-${fi}`;
+      cell.innerHTML = `<div class="kz-pawns" data-finish="${s}-${fi}"></div>`;
+      board.appendChild(cell);
+    });
+  }
+
+  // Ev hücreleri
+  for (let s = 0; s < 4; s++) {
+    KZ_HOME[s].forEach((pos, hi) => {
+      const cell = document.createElement('div');
+      cell.className = `kz-cell kz-cell-home kz-c-${KZ_COLORS[s]}`;
+      cell.style.gridRow = pos.r;
+      cell.style.gridColumn = pos.c;
+      cell.id = `kz-home-${s}-${hi}`;
+      cell.innerHTML = `<div class="kz-pawns" data-home="${s}-${hi}"></div>`;
+      board.appendChild(cell);
+    });
+  }
+
+  _kzBoardBuilt = true;
+}
+
+let _kzLastDie = 0;
+function renderKZ() {
+  const gs = state.gameState;
+  if (!gs) return;
+  if (!_kzBoardBuilt) _kzBuildBoard();
+
+  // Game over
+  const goEl = document.getElementById('kz-gameover');
+  if (gs.gameOver) {
+    goEl.style.display = 'flex';
+    const ol = document.getElementById('kz-rankings');
+    ol.innerHTML = '';
+    const ranks = gs.rankings || [];
+    ranks.forEach((pid, i) => {
+      const p = gs.players.find(pl => pl.id === pid);
+      if (p) ol.innerHTML += `<li><span style="color:${p.color};font-weight:bold">${p.token} ${p.name}</span></li>`;
+    });
+    // Hâlâ bitirmemiş olanlar da listede sona
+    gs.players.filter(p => !p.winner).forEach(p => {
+      ol.innerHTML += `<li style="opacity:0.5">${p.token} ${p.name} (bitiremedi)</li>`;
+    });
+  } else {
+    goEl.style.display = 'none';
+  }
+
+  _kzRenderPlayers(gs);
+  _kzRenderPawns(gs);
+  _kzRenderDieAndButtons(gs);
+  // Log
+  const logEl = document.getElementById('kz-log');
+  logEl.innerHTML = (gs.log || []).map(l => `<div class="kz-log-entry">${escapeHtml(l)}</div>`).join('');
+}
+
+function _kzRenderPlayers(gs) {
+  const panel = document.getElementById('kz-players-panel');
+  panel.innerHTML = '';
+  gs.players.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'kz-player-card';
+    if (p.id === gs.turnPlayerId && !gs.gameOver) card.classList.add('is-turn');
+    if (p.winner) card.classList.add('is-winner');
+    card.style.setProperty('--p-color', p.color);
+    const myPawns = gs.pawns.filter(pa => pa.ownerId === p.id);
+    const inHome = myPawns.filter(pa => pa.state === 'home').length;
+    const onTrack = myPawns.filter(pa => pa.state === 'track').length;
+    const inFinish = myPawns.filter(pa => pa.state === 'finish').length;
+    card.innerHTML = `
+      <div class="kz-player-name">${p.token} ${escapeHtml(p.name)}${p.id === state.you?.id ? ' (SEN)' : ''}${p.winner ? ' 🏆' : ''}</div>
+      <div class="kz-player-progress">🏠 ${inHome} · 🛣️ ${onTrack} · 🏁 ${inFinish}</div>
+    `;
+    panel.appendChild(card);
+  });
+}
+
+// Track loop'taki STARTS — server ile aynı tutuyoruz, finish entry hesabı için
+const KZ_STARTS = [0, 10, 20, 30];
+
+let _kzPrevPawn = {};        // pawnId → {state, trackPos, finishSlot}
+let _kzAnimating = new Set();
+
+function _kzPawnTargetCell(pawn) {
+  if (pawn.state === 'home') {
+    // Boş home slotu bul
+    for (let h = 0; h < 4; h++) {
+      const c = document.querySelector(`[data-home="${pawn.slot}-${h}"]`);
+      if (c && c.querySelectorAll('.kz-pawn').length === 0) return c;
+    }
+    return document.querySelector(`[data-home="${pawn.slot}-0"]`);
+  }
+  if (pawn.state === 'track')  return document.querySelector(`[data-track="${pawn.trackPos}"]`);
+  if (pawn.state === 'finish') return document.querySelector(`[data-finish="${pawn.slot}-${pawn.finishSlot}"]`);
+  return null;
+}
+
+function _kzPlacePawnAt(el, step, slot) {
+  let container;
+  if (step.state === 'track')  container = document.querySelector(`[data-track="${step.trackPos}"]`);
+  else if (step.state === 'finish') container = document.querySelector(`[data-finish="${slot}-${step.finishSlot}"]`);
+  else if (step.state === 'home') {
+    for (let h = 0; h < 4; h++) {
+      const c = document.querySelector(`[data-home="${slot}-${h}"]`);
+      if (c && c.querySelectorAll('.kz-pawn').length === 0) { container = c; break; }
+    }
+    if (!container) container = document.querySelector(`[data-home="${slot}-0"]`);
+  }
+  if (container) container.appendChild(el);
+  el.classList.remove('kz-hop');
+  void el.offsetWidth;
+  el.classList.add('kz-hop');
+}
+
+function _kzBuildPath(from, to, slot) {
+  const path = [];
+  if (to.state === 'home') { path.push({ state: 'home' }); return path; }
+  if (from.state === 'home' && to.state === 'track') {
+    path.push({ state: 'track', trackPos: to.trackPos }); return path;
+  }
+  if (from.state === 'track' && to.state === 'track') {
+    let pos = from.trackPos, safety = 0;
+    while (pos !== to.trackPos && safety < 41) {
+      pos = (pos + 1) % 40;
+      path.push({ state: 'track', trackPos: pos });
+      safety++;
+    }
+    return path;
+  }
+  if (from.state === 'track' && to.state === 'finish') {
+    const lastTrack = (KZ_STARTS[slot] - 1 + 40) % 40;
+    let pos = from.trackPos, safety = 0;
+    while (pos !== lastTrack && safety < 41) {
+      pos = (pos + 1) % 40;
+      path.push({ state: 'track', trackPos: pos });
+      safety++;
+    }
+    for (let s = 0; s <= to.finishSlot; s++) path.push({ state: 'finish', finishSlot: s });
+    return path;
+  }
+  if (from.state === 'finish' && to.state === 'finish') {
+    for (let s = from.finishSlot + 1; s <= to.finishSlot; s++) path.push({ state: 'finish', finishSlot: s });
+    return path;
+  }
+  return path;
+}
+
+function _kzAnimatePawn(pawnId, el, fromSt, toSt, slot) {
+  _kzAnimating.add(pawnId);
+  const steps = _kzBuildPath(fromSt, toSt, slot);
+  if (steps.length === 0) {
+    _kzAnimating.delete(pawnId);
+    return;
+  }
+  let i = 0;
+  const tick = () => {
+    if (i >= steps.length) {
+      _kzAnimating.delete(pawnId);
+      _kzPrevPawn[pawnId] = { ...toSt };
+      // Sunucu pozisyonu değiştiyse devam et
+      const gs = state.gameState;
+      const p = gs?.pawns?.find(pp => pp.id === pawnId);
+      if (p) {
+        const cur = { state: p.state, trackPos: p.trackPos, finishSlot: p.finishSlot };
+        const same = cur.state === toSt.state && cur.trackPos === toSt.trackPos && cur.finishSlot === toSt.finishSlot;
+        if (!same) _kzAnimatePawn(pawnId, el, toSt, cur, p.slot);
+      }
+      return;
+    }
+    _kzPlacePawnAt(el, steps[i++], slot);
+    setTimeout(tick, 130);
+  };
+  tick();
+}
+
+function _kzRenderPawns(gs) {
+  // Aday olmayan eski pawn'ları kaldır
+  document.querySelectorAll('[data-pawn-id]').forEach(el => {
+    if (!gs.pawns.some(p => p.id === el.dataset.pawnId)) {
+      el.remove();
+      delete _kzPrevPawn[el.dataset.pawnId];
+      _kzAnimating.delete(el.dataset.pawnId);
+    }
+  });
+
+  const myId = state.you?.id;
+  const movableSet = new Set(gs.pendingMove?.movableIds || []);
+  const isMyTurn = gs.turnPlayerId === myId;
+  const walkOn = state.settings?.kizma?.walkAnimation !== false;
+
+  gs.pawns.forEach(pawn => {
+    const player = gs.players.find(p => p.id === pawn.ownerId);
+    if (!player) return;
+
+    let el = document.querySelector(`[data-pawn-id="${pawn.id}"]`);
+    const isNew = !el;
+    if (isNew) {
+      el = document.createElement('div');
+      el.className = 'kz-pawn';
+      el.dataset.pawnId = pawn.id;
+    }
+    el.style.setProperty('--p-color', player.color);
+    el.textContent = player.token || '';
+    el.title = player.name;
+    el.classList.toggle('in-home', pawn.state === 'home');
+    el.classList.remove('movable');
+    el.onclick = null;
+    if (isMyTurn && movableSet.has(pawn.id)) {
+      el.classList.add('movable');
+      el.onclick = () => socket.emit('kizma:move', { pawnId: pawn.id });
+    }
+
+    if (isNew) {
+      const cell = _kzPawnTargetCell(pawn);
+      cell?.appendChild(el);
+      _kzPrevPawn[pawn.id] = { state: pawn.state, trackPos: pawn.trackPos, finishSlot: pawn.finishSlot };
+      return;
+    }
+
+    if (_kzAnimating.has(pawn.id)) return;
+
+    const prev = _kzPrevPawn[pawn.id];
+    const cur  = { state: pawn.state, trackPos: pawn.trackPos, finishSlot: pawn.finishSlot };
+    const changed = !prev || prev.state !== cur.state || prev.trackPos !== cur.trackPos || prev.finishSlot !== cur.finishSlot;
+    if (!changed) return;
+
+    // Yürüme animasyonu yoksa veya home'a/from home varış ise direkt yerleştir
+    const skipAnim = !walkOn || !prev || prev.state === 'home' || cur.state === 'home';
+    if (skipAnim) {
+      const cell = _kzPawnTargetCell(pawn);
+      cell?.appendChild(el);
+      _kzPrevPawn[pawn.id] = cur;
+    } else {
+      _kzAnimatePawn(pawn.id, el, prev, cur, pawn.slot);
+    }
+  });
+}
+
+// ============================================================
+// İSKAMBİL KART RENDER (Pişti ve gelecekteki kart oyunları için ortak)
+// ============================================================
+const SUIT_SYMBOL = { H: '♥', D: '♦', C: '♣', S: '♠' };
+const SUIT_COLOR  = { H: 'is-red', D: 'is-red', C: 'is-black', S: 'is-black' };
+
+function iskambilCardHTML(card, opts = {}) {
+  if (!card) return '';
+  const { faceDown = false, large = false, mini = false } = opts;
+  const sym = SUIT_SYMBOL[card.suit] || '?';
+  const colorCls = SUIT_COLOR[card.suit] || 'is-black';
+  let sizeCls = '';
+  if (large) sizeCls = 'large';
+  else if (mini) sizeCls = 'mini';
+  if (faceDown) {
+    return `<div class="iskambil-card is-face-down ${sizeCls}"></div>`;
+  }
+  const rank = card.rank;
+  const isFace = (rank === 'J' || rank === 'Q' || rank === 'K');
+  let centerHTML;
+  if (isFace) {
+    centerHTML = `<div class="ic-face"><div class="ic-face-letter">${rank}</div></div>`;
+  } else if (rank === 'A') {
+    centerHTML = `<div class="ic-center-symbol">${sym}</div>`;
+  } else {
+    // 2-10: orta simgenin sayı kadar tekrarı (basit yaklaşım)
+    centerHTML = `<div class="ic-center-symbol">${sym}</div>`;
+  }
+  return `
+    <div class="iskambil-card ${colorCls} ${sizeCls}">
+      <div class="ic-corner tl"><span class="ic-rank">${rank}</span><span class="ic-suit">${sym}</span></div>
+      ${centerHTML}
+      <div class="ic-corner br"><span class="ic-rank">${rank}</span><span class="ic-suit">${sym}</span></div>
+    </div>`;
+}
+
+// ============================================================
+// PİŞTİ ARAYÜZÜ
+// ============================================================
+document.getElementById('pi-exit')?.addEventListener('click', exitGame);
+document.getElementById('pi-back-lobby')?.addEventListener('click', exitGame);
+document.getElementById('pi-next-round')?.addEventListener('click', () => {
+  socket.emit('pisti:nextRound');
+});
+
+let _piLastEventKey = null;
+function renderPI() {
+  const gs = state.gameState;
+  if (!gs) return;
+
+  // Game over
+  if (gs.gameOver) {
+    document.getElementById('pi-gameover').style.display = 'flex';
+    const w = gs.players.find(p => p.id === gs.winner);
+    document.getElementById('pi-winner').textContent = w ? `${w.token} ${w.name}` : '-';
+    const fs = document.getElementById('pi-final-scores');
+    fs.innerHTML = '<table style="margin:12px auto"><tr><th>Oyuncu</th><th style="padding-left:24px">Puan</th></tr>' +
+      [...gs.players].sort((a, b) => gs.scores[b.id] - gs.scores[a.id])
+        .map(p => `<tr><td style="color:${p.color}">${p.token} ${escapeHtml(p.name)}</td><td style="text-align:right;font-weight:bold">${gs.scores[p.id]}</td></tr>`).join('') + '</table>';
+    document.getElementById('pi-round-modal').style.display = 'none';
+  } else {
+    document.getElementById('pi-gameover').style.display = 'none';
+  }
+
+  // Round end modal
+  if (gs.phase === 'roundEnd' && gs.roundEndSummary && !gs.gameOver) {
+    document.getElementById('pi-round-modal').style.display = 'flex';
+    _piRenderRoundSummary(gs);
+  } else {
+    document.getElementById('pi-round-modal').style.display = 'none';
+  }
+
+  _piRenderScoreboard(gs);
+  _piRenderTable(gs);
+  _piRenderHand(gs);
+  _piRenderEventFlash(gs);
+
+  // Log
+  const logEl = document.getElementById('pi-log');
+  logEl.innerHTML = (gs.log || []).map(l => `<div class="pi-log-entry">${escapeHtml(l)}</div>`).join('');
+}
+
+function _piRenderScoreboard(gs) {
+  const sb = document.getElementById('pi-scoreboard');
+  sb.innerHTML = '';
+  gs.players.forEach(p => {
+    const isTurn = p.id === gs.turnPlayerId && gs.phase === 'playing' && !gs.gameOver;
+    const isWinner = gs.winner === p.id;
+    const item = document.createElement('div');
+    item.className = 'pi-score-item' + (isTurn ? ' is-turn' : '') + (isWinner ? ' is-winner' : '');
+    item.style.setProperty('--p-color', p.color);
+    const capCount = gs.captureCount?.[p.id] ?? 0;
+    const pistis = (gs.pistiCounts?.[p.id] || 0) + (gs.jackPistiCounts?.[p.id] || 0);
+    item.innerHTML = `
+      <div>
+        <div class="pi-score-name">${p.token} ${escapeHtml(p.name)}${p.id === state.you?.id ? ' (SEN)' : ''}</div>
+        <div class="pi-score-meta">📥 ${capCount} kart${pistis > 0 ? ` · 🎯 ${pistis} pişti` : ''}</div>
+      </div>
+      <div class="pi-score-value">${gs.scores?.[p.id] ?? 0}</div>
+    `;
+    sb.appendChild(item);
+  });
+  if (gs.targetScore) {
+    const tgt = document.createElement('div');
+    tgt.className = 'pi-score-item';
+    tgt.style.background = '#fff9c4';
+    tgt.innerHTML = `<div><div class="pi-score-name">🎯 Hedef</div></div><div class="pi-score-value">${gs.targetScore}</div>`;
+    sb.appendChild(tgt);
+  }
+}
+
+function _piRenderTable(gs) {
+  const myId = state.you?.id;
+  // Diğer oyuncuların konumu: 2 oyuncu → top, 3 → left+right, 4 → left+top+right
+  const others = gs.players.filter(p => p.id !== myId);
+  const slots = { left: null, top: null, right: null };
+  if (others.length === 1) slots.top = others[0];
+  else if (others.length === 2) { slots.left = others[0]; slots.right = others[1]; }
+  else if (others.length === 3) { slots.left = others[0]; slots.top = others[1]; slots.right = others[2]; }
+
+  ['left', 'top', 'right'].forEach(side => {
+    const el = document.getElementById('pi-opp-' + side);
+    const p = slots[side];
+    if (!p) { el.innerHTML = ''; return; }
+    const isTurn = p.id === gs.turnPlayerId && gs.phase === 'playing' && !gs.gameOver;
+    const handCount = gs.handCount?.[p.id] ?? 0;
+    el.style.setProperty('--p-color', p.color);
+    el.innerHTML = `
+      <div class="pi-opp-name ${isTurn ? 'is-turn' : ''}">${p.token} ${escapeHtml(p.name)}</div>
+      <div class="pi-opp-cards">
+        ${Array.from({ length: handCount }, () => iskambilCardHTML(null, { faceDown: true, mini: true })).join('')}
+      </div>
+    `;
+  });
+
+  // Deste
+  const deckEl = document.getElementById('pi-deck');
+  const deckCount = gs.deck?.length || 0;
+  if (deckCount > 0) {
+    deckEl.classList.remove('pi-deck-empty');
+    deckEl.innerHTML = iskambilCardHTML(null, { faceDown: true }) + `<span class="pi-deck-count">Deste: ${deckCount}</span>`;
+  } else {
+    deckEl.classList.add('pi-deck-empty');
+    deckEl.innerHTML = `<span style="margin:auto">Deste bitti</span>`;
+  }
+
+  // Pile
+  const pileEl = document.getElementById('pi-pile');
+  const pile = gs.pile || [];
+  pileEl.innerHTML = '';
+  if (pile.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'pi-pile-empty';
+    empty.innerHTML = `<span>(boş)</span>`;
+    pileEl.appendChild(empty);
+  } else {
+    // En fazla son 3 kartı görselleştir, üstte top
+    const show = pile.slice(-3);
+    show.forEach((c, i) => {
+      const div = document.createElement('div');
+      div.style.position = 'absolute';
+      div.style.left = `${i * 6}px`;
+      div.style.top = `${i * 4}px`;
+      div.style.zIndex = i;
+      div.style.transform = `rotate(${(i - 1) * 4}deg)`;
+      div.innerHTML = iskambilCardHTML(c);
+      pileEl.appendChild(div);
+    });
+  }
+  // Pile count
+  const cnt = document.createElement('span');
+  cnt.className = 'pi-pile-count';
+  cnt.textContent = `Yığın: ${pile.length}`;
+  pileEl.appendChild(cnt);
+
+  // Turn info
+  const turnInfo = document.getElementById('pi-turn-info');
+  if (gs.gameOver) turnInfo.textContent = '🏆 Oyun bitti';
+  else if (gs.phase === 'roundEnd') turnInfo.textContent = '⏸️ El sonu';
+  else if (gs.turnPlayerId === myId) turnInfo.innerHTML = '<span style="color:#f1c40f">🎯 SIRA SENDE — kart oyna</span>';
+  else {
+    const tp = gs.players.find(p => p.id === gs.turnPlayerId);
+    turnInfo.innerHTML = `Sıra: <span style="color:${tp?.color}">${tp?.token} ${escapeHtml(tp?.name || '')}</span>`;
+  }
+}
+
+function _piRenderHand(gs) {
+  const myId = state.you?.id;
+  const me = gs.players.find(p => p.id === myId);
+  const handEl = document.getElementById('pi-my-hand');
+  const labelEl = document.getElementById('pi-my-label');
+  handEl.innerHTML = '';
+  if (!me) {
+    labelEl.textContent = 'İzleyici (sen oyuncu değilsin)';
+    return;
+  }
+  const myHand = gs.hands?.[myId] || [];
+  labelEl.innerHTML = `${me.token} Senin Elin <small style="color:#666">(${myHand.length} kart)</small>`;
+  const isMyTurn = gs.turnPlayerId === myId && gs.phase === 'playing' && !gs.gameOver;
+  myHand.forEach((card, idx) => {
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = iskambilCardHTML(card);
+    const cardEl = wrapper.firstElementChild;
+    if (isMyTurn) {
+      cardEl.classList.add('is-clickable');
+      cardEl.addEventListener('click', () => {
+        socket.emit('pisti:play', { cardIndex: idx });
+      });
+    } else {
+      cardEl.classList.add('is-dimmed');
+    }
+    handEl.appendChild(cardEl);
+  });
+}
+
+function _piRenderEventFlash(gs) {
+  const flashEl = document.getElementById('pi-event-flash');
+  const ev = gs.lastEvent;
+  if (!ev) { flashEl.classList.remove('show'); return; }
+  // Aynı event'i tekrar tetikleme
+  const key = `${ev.type}-${ev.playerId}-${ev.card?.rank}-${ev.card?.suit}-${gs.captureCount?.[ev.playerId]}`;
+  if (key === _piLastEventKey) return;
+  _piLastEventKey = key;
+  if (ev.type === 'pisti') {
+    flashEl.textContent = 'PİŞTİ! 🎯';
+    flashEl.classList.remove('show');
+    void flashEl.offsetWidth;
+    flashEl.classList.add('show');
+    SFX.confetti?.();
+  } else if (ev.type === 'jackPisti') {
+    flashEl.textContent = 'J PİŞTİ! 💥';
+    flashEl.classList.remove('show');
+    void flashEl.offsetWidth;
+    flashEl.classList.add('show');
+    SFX.confetti?.();
+  }
+}
+
+function _piRenderRoundSummary(gs) {
+  const wrap = document.getElementById('pi-round-summary');
+  wrap.innerHTML = '';
+  document.getElementById('pi-round-title').textContent = `🎴 ${gs.round}. El Sonu`;
+  gs.roundEndSummary.forEach(s => {
+    const p = gs.players.find(pl => pl.id === s.id);
+    const row = document.createElement('div');
+    row.className = 'pi-round-row';
+    row.style.setProperty('--p-color', p?.color || '#999');
+    row.innerHTML = `
+      <h4 style="color:${p?.color}">${p?.token} ${escapeHtml(p?.name)}</h4>
+      <table>
+        <tr><td>📥 Toplam kart</td><td>${s.cards}${s.mostCards ? ' (en çok +3)' : ''}</td></tr>
+        <tr><td>♠ A (×${s.aces})</td><td>${s.aces}</td></tr>
+        <tr><td>♣ J (×${s.jacks})</td><td>${s.jacks}</td></tr>
+        <tr><td>♣2</td><td>${s.twoClubs}</td></tr>
+        <tr><td>♦10</td><td>${s.tenDiamonds}</td></tr>
+        <tr><td>🎯 Pişti (×${s.pisti})</td><td>${s.pisti * 10}</td></tr>
+        <tr><td>💥 J Pişti (×${s.jPisti})</td><td>${s.jPisti * (state.settings?.pisti?.jackPistiBonus === 'single' ? 10 : 20)}</td></tr>
+        <tr class="pi-row-subtotal"><td>📊 Bu el toplam</td><td>+${s.subtotal}</td></tr>
+        <tr><td>💼 Toplam puan</td><td><b>${gs.scores[s.id]}</b></td></tr>
+      </table>
+    `;
+    wrap.appendChild(row);
+  });
+}
+
+function _kzRenderDieAndButtons(gs) {
+  const die = gs.die || 0;
+  const dieEl = document.getElementById('kz-die');
+  if (die !== _kzLastDie && die > 0) {
+    dieEl.classList.add('rolling');
+    setTimeout(() => dieEl.classList.remove('rolling'), 550);
+  }
+  _kzLastDie = die;
+  dieEl.textContent = die > 0 ? die : '?';
+
+  const turnPlayer = gs.players.find(p => p.id === gs.turnPlayerId);
+  const turnInfo = document.getElementById('kz-turn-info');
+  const myId = state.you?.id;
+  const isMyTurn = gs.turnPlayerId === myId;
+  if (gs.gameOver) turnInfo.textContent = '🏆 Oyun bitti';
+  else if (isMyTurn) turnInfo.innerHTML = `<span style="color:#f1c40f">🎯 SIRA SENDE</span>`;
+  else turnInfo.innerHTML = `Sıra: <span style="color:${turnPlayer?.color}">${turnPlayer?.token} ${escapeHtml(turnPlayer?.name || '')}</span>`;
+
+  const btns = document.getElementById('kz-action-buttons');
+  btns.innerHTML = '';
+  if (gs.gameOver) return;
+  const me = gs.players.find(p => p.id === myId);
+  if (!me || me.winner) return;
+  if (!isMyTurn) return;
+
+  if (gs.phase === 'rolling' && die === 0) {
+    const rollBtn = document.createElement('button');
+    rollBtn.className = 'btn btn-primary';
+    rollBtn.textContent = '🎲 Zar At';
+    rollBtn.addEventListener('click', () => socket.emit('kizma:roll'));
+    btns.appendChild(rollBtn);
+  } else if (gs.phase === 'awaitMove') {
+    const hint = document.createElement('p');
+    hint.style.cssText = 'text-align:center;font-size:0.85rem;color:#666;margin:4px 0';
+    hint.textContent = '👇 Hareket ettirmek istediğin piyona tıkla';
+    btns.appendChild(hint);
+  }
+}

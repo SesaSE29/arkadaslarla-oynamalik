@@ -218,6 +218,20 @@
               <p>Türkiye şehirlerini topla, rakipleri batır!</p>
               <span class="game-meta">2-8 oyuncu · 30+ dk</span>
             </button>
+
+            <button class="game-card" data-game="kizma">
+              <div class="game-icon">🎲</div>
+              <h3>Kızma Birader</h3>
+              <p>6 atıp piyon çıkar, rakibi eve gönder!</p>
+              <span class="game-meta">2-4 oyuncu · 15 dk</span>
+            </button>
+
+            <button class="game-card" data-game="pisti">
+              <div class="game-icon">🎴</div>
+              <h3>Pişti</h3>
+              <p>Eşle, kap, pişti yap! Klasik iskambil oyunu.</p>
+              <span class="game-meta">2-4 oyuncu · 15-25 dk</span>
+            </button>
           </div>
           <p class="hint" id="host-hint">Sadece oda kurucusu oyun başlatabilir.</p>
         </div>
@@ -970,6 +984,17 @@
         </div>
       </div>
 
+      <div class="sy-modal" id="sy-token-modal" style="display:none">
+        <div class="sy-modal-content">
+          <h3>🎲 Karakterini Seç</h3>
+          <p style="text-align:center;color:#666;font-size:0.85rem">Tahtada görünecek figürün. Solgun olanlar başkalarının.</p>
+          <div class="sy-token-grid" id="sy-token-grid"></div>
+          <div class="sy-modal-actions">
+            <button class="btn btn-secondary" id="sy-token-close">Kapat</button>
+          </div>
+        </div>
+      </div>
+
       <div class="sy-modal" id="sy-manage-modal" style="display:none">
         <div class="sy-modal-content sy-modal-wide">
           <h3>🏘️ Mülk Yönetimi</h3>
@@ -987,6 +1012,110 @@
           <div class="gameover-actions">
             <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
             <button class="btn btn-secondary" id="sy-back-lobby">Lobiye Dön</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN: KIZMA BİRADER ========== -->
+    <section id="screen-kizma" class="screen">
+      <div class="game-header">
+        <h2>🎲 Kızma Birader</h2>
+        <button class="btn btn-ghost btn-sm" id="kz-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="kz-layout">
+        <aside class="kz-players-panel" id="kz-players-panel"></aside>
+
+        <div class="kz-board-wrap">
+          <div class="kz-board" id="kz-board"></div>
+        </div>
+
+        <aside class="kz-action-panel">
+          <div class="kz-die-area">
+            <div class="kz-die" id="kz-die">?</div>
+            <p class="kz-turn-info" id="kz-turn-info">Sıra bekleniyor...</p>
+          </div>
+          <div class="kz-action-buttons" id="kz-action-buttons"></div>
+          <div class="kz-log-wrap">
+            <h4>📜 Olay Akışı</h4>
+            <div class="kz-log" id="kz-log"></div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="game-over" id="kz-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Kızma Birader Bitti!</h2>
+          <p>Sıralama:</p>
+          <ol id="kz-rankings"></ol>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="kz-back-lobby">Lobiye Dön</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== EKRAN: PİŞTİ ========== -->
+    <section id="screen-pisti" class="screen">
+      <div class="game-header">
+        <h2>🎴 Pişti</h2>
+        <button class="btn btn-ghost btn-sm" id="pi-exit">Lobiye Dön</button>
+      </div>
+
+      <div class="pi-layout">
+        <!-- Üst: skorboard -->
+        <div class="pi-scoreboard" id="pi-scoreboard"></div>
+
+        <!-- Orta: masa -->
+        <div class="pi-table-area">
+          <!-- Diğer oyuncuların gösterimi (sol/üst/sağ) -->
+          <div class="pi-opponent pi-opponent-left" id="pi-opp-left"></div>
+          <div class="pi-opponent pi-opponent-top"  id="pi-opp-top"></div>
+          <div class="pi-opponent pi-opponent-right" id="pi-opp-right"></div>
+
+          <!-- Merkez: deste + yığın -->
+          <div class="pi-center">
+            <div class="pi-deck" id="pi-deck" title="Deste"></div>
+            <div class="pi-pile" id="pi-pile"></div>
+            <div class="pi-turn-info" id="pi-turn-info">Sıra bekleniyor...</div>
+            <div class="pi-event-flash" id="pi-event-flash"></div>
+          </div>
+        </div>
+
+        <!-- Alt: kendi elim -->
+        <div class="pi-my-hand-wrap">
+          <div class="pi-my-label" id="pi-my-label">Senin Elin</div>
+          <div class="pi-my-hand" id="pi-my-hand"></div>
+        </div>
+
+        <!-- Log (sağda küçük) -->
+        <div class="pi-log-wrap">
+          <h4>📜 Olay Akışı</h4>
+          <div class="pi-log" id="pi-log"></div>
+        </div>
+      </div>
+
+      <!-- Round end modal -->
+      <div class="sy-modal" id="pi-round-modal" style="display:none">
+        <div class="sy-modal-content sy-modal-wide">
+          <h3 id="pi-round-title">🎴 El Sonu</h3>
+          <div class="pi-round-summary" id="pi-round-summary"></div>
+          <div class="sy-modal-actions">
+            <button class="btn btn-primary host-only" id="pi-next-round">▶ Sonraki El</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="game-over" id="pi-gameover" style="display:none">
+        <div class="game-over-card">
+          <h2>🏆 Pişti Bitti!</h2>
+          <p>Kazanan: <strong id="pi-winner">-</strong></p>
+          <div id="pi-final-scores"></div>
+          <div class="gameover-actions">
+            <button class="btn btn-primary btn-replay host-only" data-replay>🔁 Tekrar Oyna</button>
+            <button class="btn btn-secondary" id="pi-back-lobby">Lobiye Dön</button>
           </div>
         </div>
       </div>
@@ -1058,6 +1187,8 @@
         <button class="settings-tab" data-tab="codenames">🕵️ Codenames</button>
         <button class="settings-tab" data-tab="uno">🃏 Uno</button>
         <button class="settings-tab" data-tab="syarisi">🏙️ Ş.Yarışı</button>
+        <button class="settings-tab" data-tab="kizma">🎲 Kızma B.</button>
+        <button class="settings-tab" data-tab="pisti">🎴 Pişti</button>
       </div>
 
       <div class="settings-body">
@@ -1363,10 +1494,93 @@
           </div>
           <div class="setting-row toggle-row">
             <label>
+              <input type="checkbox" id="set-syarisi-enableTrade" data-game="syarisi" data-key="enableTrade" checked/>
+              Takas aç
+            </label>
+            <span class="setting-info">Oyuncular birbirleriyle mülk/para takasi yapabilsin</span>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
               <input type="checkbox" id="set-syarisi-parkingPot" data-game="syarisi" data-key="parkingPot"/>
               Ücretsiz Park kasası
             </label>
             <span class="setting-info">Vergi/cezalar Ücretsiz Park'ta birikir; oraya gelene verilir</span>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-syarisi-walkAnimation" data-game="syarisi" data-key="walkAnimation" checked/>
+              Yürüme animasyonu
+            </label>
+            <span class="setting-info">Token kare kare yürür. Kapatırsan anında ışınlanır (daha hızlı)</span>
+          </div>
+        </div>
+
+        <!-- KIZMA BİRADER -->
+        <div class="settings-pane" data-pane="kizma">
+          <div class="setting-row">
+            <label>3 ardışık altı kuralı</label>
+            <select id="set-kizma-threeSixesPenalty" data-game="kizma" data-key="threeSixesPenalty" class="settings-select">
+              <option value="loseTurn">3. altıda sıra geçer (klasik)</option>
+              <option value="none">Sınır yok, sonsuz altı</option>
+            </select>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-kizma-autoSingleMove" data-game="kizma" data-key="autoSingleMove" checked/>
+              Tek seçenek varsa otomatik oyna
+            </label>
+            <span class="setting-info">Hareket edebilen tek piyon varsa server otomatik oynar</span>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-kizma-enableCapture" data-game="kizma" data-key="enableCapture" checked/>
+              Kapma açık
+            </label>
+            <span class="setting-info">Rakip piyona basınca eve gönderilsin mi</span>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-kizma-stopOnFirstWinner" data-game="kizma" data-key="stopOnFirstWinner"/>
+              İlk bitiren kazanır → oyunu durdur
+            </label>
+            <span class="setting-info">Kapalıyken sıralama tutulur, sona kalan 1 oyuncu olunca biter</span>
+          </div>
+          <div class="setting-row toggle-row">
+            <label>
+              <input type="checkbox" id="set-kizma-walkAnimation" data-game="kizma" data-key="walkAnimation" checked/>
+              Yürüme animasyonu
+            </label>
+            <span class="setting-info">Piyon kare kare ilerler. Kapatırsan anında varır.</span>
+          </div>
+          <div class="setting-row">
+            <p style="color:var(--color-text-light); font-style: italic; font-size: 0.9rem; line-height: 1.5">
+              🎮 Kurallar: 6 atınca piyon evden çıkar veya 6 attığında tekrar atarsın.
+              Rakip piyonun olduğu kareye basarsan onu eve gönderir.
+              4 piyonu finiş hattına sokan kazanır.
+            </p>
+          </div>
+        </div>
+
+        <!-- PİŞTİ -->
+        <div class="settings-pane" data-pane="pisti">
+          <div class="setting-row">
+            <label>Hedef skor: <span class="setting-value" id="set-pisti-targetScore-val">101</span> puan</label>
+            <input type="range" id="set-pisti-targetScore" min="51" max="251" step="50" value="101" data-game="pisti" data-key="targetScore"/>
+            <span class="setting-info">Bu skora ilk ulaşan kazanır</span>
+          </div>
+          <div class="setting-row">
+            <label>J üstüne J Pişti (J Pişti)</label>
+            <select id="set-pisti-jackPistiBonus" data-game="pisti" data-key="jackPistiBonus" class="settings-select">
+              <option value="double">Çift puan (20)</option>
+              <option value="single">Normal pişti (10)</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <p style="color:var(--color-text-light); font-style: italic; font-size: 0.9rem; line-height: 1.5">
+              🎮 Kurallar: Ortadaki yığının üstündeki kartla aynı rütbeli kart oynarsan yığını kaparsın.
+              J ile her yığını kaparsın. Tek karta tek kart eşle = Pişti (10 puan).
+              Her A/J = 1, ♣2 = 2, ♦10 = 3, en çok kart = 3 puan.
+            </p>
           </div>
         </div>
       </div>
